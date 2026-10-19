@@ -8,6 +8,7 @@
 #include <Jolt/Physics/Constraints/GearMeshConstraint.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/LargeIslandSplitter.h>
 #include <Jolt/ObjectStream/TypeDeclarations.h>
 #include <Jolt/Core/StreamIn.h>
 #include <Jolt/Core/StreamOut.h>
@@ -147,12 +148,15 @@ void GearMeshConstraint::SetConstraints(const Constraint *inGear1, const Constra
 		Vec3 gear_axis = gears[i]->GetRotation() * local_axes[i];
 		mHingeSign[i] = body_sign * (hinge_axis.Dot(gear_axis) >= 0.0f? 1.0f : -1.0f);
 		mPrevAngle[i] = hinge->GetCurrentAngle();
+		(i == 0? mFrame1 : mFrame2) = body_sign > 0.0f? hinge->GetBody1() : hinge->GetBody2();
 	}
 	if (mHingeSign[0] == 0.0f || mHingeSign[1] == 0.0f)
 	{
-		// Need both for the phase error
+		// Need both for the phase error and the frames
 		mGear1Constraint = nullptr;
 		mGear2Constraint = nullptr;
+		mFrame1 = nullptr;
+		mFrame2 = nullptr;
 	}
 }
 
@@ -169,7 +173,7 @@ float GearMeshConstraint::GetPositionError() const
 		return 0.0f;
 
 	// Displacement of the material points at P (relative to the frame) since the hinges were set, along the line of
-	// action; C = n . (p2 - p1) is the AxisConstraintPart convention
+	// action: C = n . (s2 - s1), the integral of the velocity constraint
 	return mWorldSpaceNormal.Dot(GetRelativeRotation(1) * mPitchVelocity2 - GetRelativeRotation(0) * mPitchVelocity1);
 }
 
@@ -240,6 +244,99 @@ void GearMeshConstraint::CalculateGeometry()
 	mWorldSpaceNormal = n;
 }
 
+void GearMeshConstraint::CalculateConstraintProperties()
+{
+	CalculateGeometry();
+
+	const Vec3 n = mWorldSpaceNormal;
+	const float k1 = n.Dot(mPitchVelocity1);
+	const float k2 = n.Dot(mPitchVelocity2);
+	const Vec3 a1 = mBody1->GetRotation() * mLocalSpaceHingeAxis1;
+	const Vec3 a2 = mBody2->GetRotation() * mLocalSpaceHingeAxis2;
+
+	// C' = n . (V2(P) - V1(P)), Vi(P) = vFi + WFi x (P - xFi) + ((wi - WFi) . ai) ei
+	mNumRows = 0;
+	auto add_row = [this](Body *inBody, Vec3Arg inLinear, Vec3Arg inAngular) {
+		Row &r = mRows[mNumRows++];
+		r.mBody = inBody;
+		r.mLinear = inLinear;
+		r.mAngular = inAngular;
+	};
+	add_row(mBody1, Vec3::sZero(), -k1 * a1);
+	add_row(mBody2, Vec3::sZero(), k2 * a2);
+	if (mFrame1 != nullptr && mFrame1 == mFrame2)
+	{
+		// One frame holds both gears: the forces n and -n at P cancel, a couple remains
+		add_row(mFrame1, Vec3::sZero(), k1 * a1 - k2 * a2);
+	}
+	else
+	{
+		if (mFrame1 != nullptr)
+			add_row(mFrame1, -n, -(Vec3(mWorldSpaceContactPoint - mFrame1->GetCenterOfMassPosition()).Cross(n) - k1 * a1));
+		if (mFrame2 != nullptr)
+			add_row(mFrame2, n, Vec3(mWorldSpaceContactPoint - mFrame2->GetCenterOfMassPosition()).Cross(n) - k2 * a2);
+	}
+
+	// K^-1 = J M^-1 J^T over the dynamic bodies
+	float inv_effective_mass = 0.0f;
+	for (int i = 0; i < mNumRows; ++i)
+	{
+		Row &r = mRows[i];
+		if (r.mBody->IsDynamic())
+		{
+			const MotionProperties *mp = r.mBody->GetMotionProperties();
+			r.mInvMass = mp->GetInverseMass();
+			r.mInvIAngular = mp->MultiplyWorldSpaceInverseInertiaByVector(r.mBody->GetRotation(), r.mAngular);
+			inv_effective_mass += r.mInvMass * r.mLinear.LengthSq() + r.mAngular.Dot(r.mInvIAngular);
+		}
+		else
+		{
+			r.mInvMass = 0.0f;
+			r.mInvIAngular = Vec3::sZero();
+		}
+	}
+	if (inv_effective_mass > 0.0f)
+		mEffectiveMass = 1.0f / inv_effective_mass;
+	else
+	{
+		mEffectiveMass = 0.0f;
+		mTotalLambda = 0.0f;
+	}
+}
+
+bool GearMeshConstraint::ApplyVelocityStep(float inLambda)
+{
+	if (inLambda == 0.0f)
+		return false;
+	for (int i = 0; i < mNumRows; ++i)
+	{
+		const Row &r = mRows[i];
+		if (!r.mBody->IsDynamic())
+			continue;
+		MotionProperties *mp = r.mBody->GetMotionProperties();
+		if (r.mInvMass != 0.0f && r.mLinear != Vec3::sZero())
+			mp->AddLinearVelocityStep((inLambda * r.mInvMass) * r.mLinear);
+		mp->AddAngularVelocityStep(inLambda * r.mInvIAngular);
+	}
+	return true;
+}
+
+bool GearMeshConstraint::ApplyPositionStep(float inLambda)
+{
+	if (inLambda == 0.0f)
+		return false;
+	for (int i = 0; i < mNumRows; ++i)
+	{
+		const Row &r = mRows[i];
+		if (!r.mBody->IsDynamic())
+			continue;
+		if (r.mInvMass != 0.0f && r.mLinear != Vec3::sZero())
+			r.mBody->AddPositionStep((inLambda * r.mInvMass) * r.mLinear);
+		r.mBody->AddRotationStep(inLambda * r.mInvIAngular);
+	}
+	return true;
+}
+
 void GearMeshConstraint::SetupVelocityConstraint(float inDeltaTime)
 {
 	// Track the hinge angles once per step (unwrapped)
@@ -254,25 +351,37 @@ void GearMeshConstraint::SetupVelocityConstraint(float inDeltaTime)
 		}
 	}
 
-	CalculateGeometry();
-	Vec3 r1 = Vec3(mWorldSpaceContactPoint - mBody1->GetCenterOfMassPosition());
-	Vec3 r2 = Vec3(mWorldSpaceContactPoint - mBody2->GetCenterOfMassPosition());
-	mAxisConstraintPart.CalculateConstraintProperties(*mBody1, r1, *mBody2, r2, mWorldSpaceNormal);
+	CalculateConstraintProperties();
 }
 
 void GearMeshConstraint::ResetWarmStart()
 {
-	mAxisConstraintPart.Deactivate();
+	mTotalLambda = 0.0f;
 }
 
 void GearMeshConstraint::WarmStartVelocityConstraint(float inWarmStartImpulseRatio)
 {
-	mAxisConstraintPart.WarmStart(*mBody1, *mBody2, mWorldSpaceNormal, inWarmStartImpulseRatio);
+	mTotalLambda *= inWarmStartImpulseRatio;
+	ApplyVelocityStep(mTotalLambda);
 }
 
 bool GearMeshConstraint::SolveVelocityConstraint(float inDeltaTime)
 {
-	return mAxisConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2, mWorldSpaceNormal, -FLT_MAX, FLT_MAX);
+	if (mEffectiveMass == 0.0f)
+		return false;
+
+	// Lagrange multiplier: lambda = -K^-1 J v
+	float jv = 0.0f;
+	for (int i = 0; i < mNumRows; ++i)
+	{
+		const Row &r = mRows[i];
+		if (r.mBody->IsStatic())
+			continue;
+		jv += r.mLinear.Dot(r.mBody->GetLinearVelocity()) + r.mAngular.Dot(r.mBody->GetAngularVelocity());
+	}
+	float lambda = -mEffectiveMass * jv;
+	mTotalLambda += lambda;
+	return ApplyVelocityStep(lambda);
 }
 
 bool GearMeshConstraint::SolvePositionConstraint(float inDeltaTime, float inBaumgarte)
@@ -281,15 +390,21 @@ bool GearMeshConstraint::SolvePositionConstraint(float inDeltaTime, float inBaum
 		return false;
 
 	// Bodies may have moved
-	CalculateGeometry();
+	CalculateConstraintProperties();
 	float error = GetPositionError();
-	if (error == 0.0f)
+	if (error == 0.0f || mEffectiveMass == 0.0f)
 		return false;
 
-	Vec3 r1 = Vec3(mWorldSpaceContactPoint - mBody1->GetCenterOfMassPosition());
-	Vec3 r2 = Vec3(mWorldSpaceContactPoint - mBody2->GetCenterOfMassPosition());
-	mAxisConstraintPart.CalculateConstraintProperties(*mBody1, r1, *mBody2, r2, mWorldSpaceNormal);
-	return mAxisConstraintPart.SolvePositionConstraint(*mBody1, *mBody2, mWorldSpaceNormal, error, inBaumgarte);
+	// Baumgarte: position change M^-1 J^T lambda with lambda = -K^-1 beta C (velocity not kept, as in Jolt's parts)
+	return ApplyPositionStep(-mEffectiveMass * inBaumgarte * error);
+}
+
+uint GearMeshConstraint::BuildIslandSplits(LargeIslandSplitter &ioSplitter) const
+{
+	// The frames are touched too: keep this constraint out of the parallel splits when one of them is dynamic
+	if ((mFrame1 != nullptr && mFrame1->IsDynamic()) || (mFrame2 != nullptr && mFrame2->IsDynamic()))
+		return ioSplitter.AssignToNonParallelSplit(mBody1);
+	return TwoBodyConstraint::BuildIslandSplits(ioSplitter);
 }
 
 #ifdef JPH_DEBUG_RENDERER
@@ -304,7 +419,7 @@ void GearMeshConstraint::SaveState(StateRecorder &inStream) const
 {
 	TwoBodyConstraint::SaveState(inStream);
 
-	mAxisConstraintPart.SaveState(inStream);
+	inStream.Write(mTotalLambda);
 	inStream.Write(mWorldSpaceNormal);
 	inStream.Write(mPrevAngle[0]);
 	inStream.Write(mPrevAngle[1]);
@@ -316,7 +431,7 @@ void GearMeshConstraint::RestoreState(StateRecorder &inStream)
 {
 	TwoBodyConstraint::RestoreState(inStream);
 
-	mAxisConstraintPart.RestoreState(inStream);
+	inStream.Read(mTotalLambda);
 	inStream.Read(mWorldSpaceNormal);
 	inStream.Read(mPrevAngle[0]);
 	inStream.Read(mPrevAngle[1]);
