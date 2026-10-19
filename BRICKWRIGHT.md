@@ -110,8 +110,8 @@ Queries: `GetContactPoint()`, `GetContactNormal()`, `GetPositionError()` (m), `G
 | Rack and pinion travel per pinion radian (expected −0.008 m) | −0.008 | −0.008 | — |
 
 Gear bodies: 8T I = 1e-4 / 3e-5 kg·m², 24T 9e-4 / 9e-5 kg·m² (Brickwright floors gear inertia at 3e-5),
-30 velocity / 10 position steps on the gear constraints, 60 Hz. The worm's 0.9 % is the frame tumbling (Jolt has
-no gyroscopic term); the spur mesh, whose frame does not tumble, conserves L to 6e-7.
+30 velocity / 10 position steps on the gear constraints, 60 Hz. The worm's 0.9 % falls to 0.1 % when the frame's inertia is
+made isotropic: most of it is the tumbling frame (Jolt integrates without a gyroscopic term), not the mesh.
 
 ## Build
 
