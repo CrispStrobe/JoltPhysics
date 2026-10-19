@@ -51,6 +51,7 @@ JPH_DECLARE_RTTI_WITH_NAMESPACE_FOR_FACTORY(JPH_EXPORT, JPH, WheelSettingsTV)
 JPH_DECLARE_RTTI_WITH_NAMESPACE_FOR_FACTORY(JPH_EXPORT, JPH, MotorcycleControllerSettings)
 JPH_DECLARE_RTTI_WITH_NAMESPACE_FOR_FACTORY(JPH_EXPORT, JPH, RackAndPinionConstraintSettings)
 JPH_DECLARE_RTTI_WITH_NAMESPACE_FOR_FACTORY(JPH_EXPORT, JPH, GearConstraintSettings)
+JPH_DECLARE_RTTI_WITH_NAMESPACE_FOR_FACTORY(JPH_EXPORT, JPH, GearMeshConstraintSettings)
 JPH_DECLARE_RTTI_WITH_NAMESPACE_FOR_FACTORY(JPH_EXPORT, JPH, PulleyConstraintSettings)
 JPH_DECLARE_RTTI_WITH_NAMESPACE_FOR_FACTORY(JPH_EXPORT, JPH, MotorSettings)
 JPH_DECLARE_RTTI_WITH_NAMESPACE_FOR_FACTORY(JPH_EXPORT, JPH, PhysicsScene)
@@ -173,6 +174,7 @@ void RegisterTypesInternal(uint64 inVersionID)
 		JPH_RTTI(PathConstraintPathHermite),
 		JPH_RTTI(RackAndPinionConstraintSettings),
 		JPH_RTTI(GearConstraintSettings),
+		JPH_RTTI(GearMeshConstraintSettings),
 		JPH_RTTI(PulleyConstraintSettings),
 		JPH_RTTI(MotorSettings),
 		JPH_RTTI(PhysicsScene),
