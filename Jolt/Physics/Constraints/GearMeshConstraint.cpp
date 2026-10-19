@@ -295,7 +295,7 @@ void GearMeshConstraint::CalculateConstraintProperties()
 			r.mInvIAngular = Vec3::sZero();
 		}
 	}
-	if (inv_effective_mass > 0.0f)
+	if (inv_effective_mass >= FLT_MIN) // as upstream #2105: a denormal would overflow to INF
 		mEffectiveMass = 1.0f / inv_effective_mass;
 	else
 	{

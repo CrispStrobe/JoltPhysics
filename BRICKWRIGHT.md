@@ -1,5 +1,19 @@
 # Brickwright fork of Jolt Physics
 
+Branch `brickwright/gear-mesh-master` = upstream **master** at `01adafba0` (after v5.6.0; includes 64-bit
+ObjectLayers #2163, `EstimateCollisionResponse` with `ContactSettings` #2166 and the denormal effective-mass guard
+#2105) plus the same gear changes as `brickwright/gear-mesh` (which is v5.6.0 `e77f175` + the gear changes and is
+the branch the released JoltPhysics.js `1.1.0-bw.1` builds). This branch exists to check that the gear changes still
+apply and behave on current master; it is not released.
+
+Port notes (cherry-picks of `686dbe2`, `fdedbe6`, `c1143da`, `f878494`):
+
+* `GearConstraintPart.h` conflicted with #2105: kept the fork's `K⁻¹ = a·I1⁻¹·a + r·b·mRatio_InvI2_B` and upstream's
+  `inv_effective_mass < FLT_MIN` deactivation test.
+* `GearMeshConstraint.cpp` uses the same `>= FLT_MIN` convention for its effective mass (was `> 0`).
+* `Constraint.h` (GearMesh after Pulley), `Jolt.cmake`, `RegisterTypes.cpp`: applied cleanly. #2163 and #2166 do not
+  touch the gear code (no object-layer or contact-response use); they matter only to the JoltPhysics.js bindings.
+
 Branch `brickwright/gear-mesh` = upstream tag **v5.6.0** (`e77f175`, the version JoltPhysics.js 1.1.0 builds) plus
 two gear changes needed by Brickwright Lite's Robot Lab. Nothing here is offered upstream (owner decision); this file
 documents what the fork changes and why. Jolt Physics is MIT licensed (see `LICENSE`, unchanged); the new files carry
