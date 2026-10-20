@@ -3,8 +3,8 @@
 Branch `brickwright/gear-mesh-master` = upstream **master** at `01adafba0` (after v5.6.0; includes 64-bit
 ObjectLayers #2163, `EstimateCollisionResponse` with `ContactSettings` #2166 and the denormal effective-mass guard
 #2105) plus the same gear changes as `brickwright/gear-mesh` (which is v5.6.0 `e77f175` + the gear changes and is
-the branch the released JoltPhysics.js `1.1.0-bw.1` builds). This branch exists to check that the gear changes still
-apply and behave on current master; it is not released.
+the branch the released JoltPhysics.js `1.1.0-bw.1` builds). Since JoltPhysics.js `1.1.0-bw.2` this is the branch
+the releases build; `1.1.0-bw.3` adds change 3 below.
 
 Port notes (cherry-picks of `686dbe2`, `fdedbe6`, `c1143da`, `f878494`):
 
@@ -106,6 +106,31 @@ physics_system.AddConstraint(c);
 ```
 
 Queries: `GetContactPoint()`, `GetContactNormal()`, `GetPositionError()` (m), `GetTotalLambda()` (N·s along n).
+
+## 3. A bounce across two bodies: continuous collision resolved it off-centre (2026-10-20, `brickwright/gear-mesh-master`)
+
+`PhysicsSystem::JobFindCCDContacts` finds the FIRST body a `LinearCast` body hits and the average point of that one
+manifold; `JobResolveCCDContacts` then applies the whole impact there, restitution included. A body landing across
+two others at the same time (Brickwright's validation scene: a 2 × 4 brick dropped 20 cm to 1 m across two loose
+beams, restitution 0.4) got its bounce impulse at the first beam's contact, off its centre of mass, and turned over
+(measured with JoltPhysics.js 1.1.0-bw.2; with CCD disabled the same 20 cm drop bounces straight up). With two LOOSE
+beams the first one also took the whole reaction: the brick left at ~0.96 of e·v and rose to 4 % of the drop instead
+of e² = 16 % (`brickwright/verify.mjs` scene F, upstream vs fork).
+
+The change (`PhysicsSystem.cpp`, `JobResolveCCDContacts` and the new `sTouchesAnotherBody`): when a CCD impact would
+BOUNCE (combined restitution > 0, approach faster than `mMinVelocityForRestitution`) and the body, posed at the time of
+impact, is within the speculative contact distance of ANOTHER body it can collide with (layers, collision group, not a
+sensor), the CCD step does not resolve it: the body is moved to the time of impact (`mFraction`, touching; not the
+`mFractionPlusSlop` pose, which is up to `mLinearCastMaxPenetration` inside) with its velocity unchanged, and the
+next step's discrete contact solve, which has the manifolds with every body it touches, applies the restitution. It
+cannot tunnel: from that pose it is in contact. Everything else is upstream's, bit for bit: a bounce off a single body
+(a part dropped on the floor), every impact that does not bounce (`verify.mjs` scene E's hash is unchanged), soft
+bodies.
+
+Limit (not changed here): the discrete solve resolves a flat multi-point restitution impact by sequential impulses,
+and that solution is not unique (a point may end with zero impulse while the body spins): a flat box bouncing off two
+static beams leaves with ~0.1–0.3 rad/s of spin (more velocity steps reduce it slowly: 0.26 → 0.17 rad/s from 10 to
+100). It does not turn the body over on the first bounce, but a tall drop's second, slightly tilted landing can.
 
 ## Results (JoltPhysics.js wasm-compat, 60 Hz, `brickwright/verify.mjs`)
 

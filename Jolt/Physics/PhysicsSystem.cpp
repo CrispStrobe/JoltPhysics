@@ -2164,6 +2164,51 @@ void PhysicsSystem::sSolveCCDContact(Body &ioBody1, float inInvM1, Mat44Arg inIn
 	}
 }
 
+// Brickwright fork: whether inBody, posed at inCenterOfMassTransform, is within inMaxSeparation of a body other than itself
+// and inHitBody that it can collide with (layers, collision group; sensors do not count). Used by JobResolveCCDContacts.
+static bool sTouchesAnotherBody(const NarrowPhaseQuery &inQuery, const Body &inBody, const BodyID &inHitBody, RMat44Arg inCenterOfMassTransform, float inMaxSeparation, const BroadPhaseLayerFilter &inBroadPhaseLayerFilter, const ObjectLayerFilter &inObjectLayerFilter)
+{
+	class OtherBodyFilter : public BodyFilter
+	{
+	public:
+								OtherBodyFilter(const Body &inBody, const BodyID &inHitBody) : mBody(inBody), mHitBody(inHitBody) { }
+
+		virtual bool			ShouldCollide(const BodyID &inBodyID) const override
+		{
+			return inBodyID != mBody.GetID() && inBodyID != mHitBody;
+		}
+
+		virtual bool			ShouldCollideLocked(const Body &inOther) const override
+		{
+			return !inOther.IsSensor() && mBody.GetCollisionGroup().CanCollide(inOther.GetCollisionGroup());
+		}
+
+	private:
+		const Body &			mBody;
+		BodyID					mHitBody;
+	};
+
+	class AnyHitCollector : public CollideShapeCollector
+	{
+	public:
+		virtual void			AddHit(const CollideShapeResult &) override
+		{
+			mFound = true;
+			ForceEarlyOut();
+		}
+
+		bool					mFound = false;
+	};
+
+	CollideShapeSettings settings;
+	settings.mMaxSeparationDistance = inMaxSeparation;
+	settings.mBackFaceMode = EBackFaceMode::IgnoreBackFaces;
+	OtherBodyFilter body_filter(inBody, inHitBody);
+	AnyHitCollector collector;
+	inQuery.CollideShape(inBody.GetShape(), Vec3::sOne(), inCenterOfMassTransform, settings, inCenterOfMassTransform.GetTranslation(), collector, inBroadPhaseLayerFilter, inObjectLayerFilter, body_filter);
+	return collector.mFound;
+}
+
 void PhysicsSystem::JobResolveCCDContacts(PhysicsUpdateContext *ioContext, PhysicsUpdateContext::Step *ioStep)
 {
 #ifdef JPH_ENABLE_ASSERTS
@@ -2218,6 +2263,9 @@ void PhysicsSystem::JobResolveCCDContacts(PhysicsUpdateContext *ioContext, Physi
 			Body &body1 = mBodyManager.GetBody(ccd_body->mBodyID1);
 			MotionProperties *body_mp = body1.GetMotionProperties();
 
+			// Brickwright fork: set when the impact bounces and is left to the next discrete step (below)
+			bool bounce_deferred = false;
+
 			// If there was a hit
 			if (!ccd_body->mBodyID2.IsInvalid())
 			{
@@ -2264,24 +2312,39 @@ void PhysicsSystem::JobResolveCCDContacts(PhysicsUpdateContext *ioContext, Physi
 						Vec3 relative_velocity = v2 - v1;
 						float normal_velocity = relative_velocity.Dot(ccd_body->mContactNormal);
 
-						// Calculate velocity bias due to restitution
-						float normal_velocity_bias;
+						// Brickwright fork: an impact that BOUNCES (restitution > 0 above mMinVelocityForRestitution) while the
+						// body also touches ANOTHER body at the time of impact is not resolved here. The CCD contact is the
+						// average contact point with the one body that was hit first, so a body landing across two others at
+						// once (a brick on two beams) got its whole bounce impulse off its centre of mass and spun, even
+						// turned over. Instead the body is moved to the time of impact below (touching, see there) with its
+						// velocity unchanged, and the next step's discrete contact solve, which has the manifolds with EVERY
+						// body it touches, applies the restitution. It cannot tunnel: it is in contact from that pose.
+						// A bounce off a single body (a part dropped on the floor) and every impact that does not bounce
+						// are resolved here exactly as upstream (bit-identical results).
+						// (The other body is still activated below: the discrete step needs it.)
 						if (contact_settings.mCombinedRestitution > 0.0f && normal_velocity < -mPhysicsSettings.mMinVelocityForRestitution)
-							normal_velocity_bias = contact_settings.mCombinedRestitution * normal_velocity;
-						else
-							normal_velocity_bias = 0.0f;
+							bounce_deferred = sTouchesAnotherBody(mNarrowPhaseQueryNoLock, body1, ccd_body->mBodyID2, body1.GetCenterOfMassTransform().PostTranslated(ccd_body->mFraction * ccd_body->mDeltaPosition), mPhysicsSettings.mSpeculativeContactDistance, GetDefaultBroadPhaseLayerFilter(body1.GetObjectLayer()), GetDefaultLayerFilter(body1.GetObjectLayer()));
+						if (!bounce_deferred)
+						{
+							// Calculate velocity bias due to restitution
+							float normal_velocity_bias;
+							if (contact_settings.mCombinedRestitution > 0.0f && normal_velocity < -mPhysicsSettings.mMinVelocityForRestitution)
+								normal_velocity_bias = contact_settings.mCombinedRestitution * normal_velocity;
+							else
+								normal_velocity_bias = 0.0f;
 
-						// Calculate direction in which the friction operates
-						Vec3 friction_direction = relative_velocity - normal_velocity * ccd_body->mContactNormal;
+							// Calculate direction in which the friction operates
+							Vec3 friction_direction = relative_velocity - normal_velocity * ccd_body->mContactNormal;
 
-						// Dispatch to the correct form
-						using DispatchFunc = void (*)(Body &, float, Mat44Arg, Vec3Arg, Body &, Vec3Arg, Vec3Arg, float, Vec3Arg, const ContactSettings &);
-						static const DispatchFunc table[3] = {
-							sSolveCCDContact<EMotionType::Static>,
-							sSolveCCDContact<EMotionType::Kinematic>,
-							sSolveCCDContact<EMotionType::Dynamic>
-						};
-						table[(int)body2.GetMotionType()](body1, inv_m1, inv_i1, r1_plus_u, body2, r2, ccd_body->mContactNormal, normal_velocity_bias, friction_direction, contact_settings);
+							// Dispatch to the correct form
+							using DispatchFunc = void (*)(Body &, float, Mat44Arg, Vec3Arg, Body &, Vec3Arg, Vec3Arg, float, Vec3Arg, const ContactSettings &);
+							static const DispatchFunc table[3] = {
+								sSolveCCDContact<EMotionType::Static>,
+								sSolveCCDContact<EMotionType::Kinematic>,
+								sSolveCCDContact<EMotionType::Dynamic>
+							};
+							table[(int)body2.GetMotionType()](body1, inv_m1, inv_i1, r1_plus_u, body2, r2, ccd_body->mContactNormal, normal_velocity_bias, friction_direction, contact_settings);
+						}
 					}
 					else
 					{
@@ -2384,7 +2447,10 @@ void PhysicsSystem::JobResolveCCDContacts(PhysicsUpdateContext *ioContext, Physi
 			}
 
 			// Update body position
-			body1.AddPositionStep(ccd_body->mDeltaPosition * ccd_body->mFractionPlusSlop);
+			// Brickwright fork: a deferred bounce stops AT the time of impact, touching and not penetrating (the slop would
+			// push it up to mLinearCastMaxPenetration in, and the next step's position correction of that, solved
+			// contact by contact, spins the body as the single CCD contact did). Every other case as upstream.
+			body1.AddPositionStep(ccd_body->mDeltaPosition * (bounce_deferred? ccd_body->mFraction : ccd_body->mFractionPlusSlop));
 		}
 
 		// Activate the requested bodies
