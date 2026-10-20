@@ -132,6 +132,30 @@ and that solution is not unique (a point may end with zero impulse while the bod
 static beams leaves with ~0.1–0.3 rad/s of spin (more velocity steps reduce it slowly: 0.26 → 0.17 rad/s from 10 to
 100). It does not turn the body over on the first bounce, but a tall drop's second, slightly tilted landing can.
 
+## 4. A rack and pinion on a moving frame: `RackMeshConstraint` (2026-10-20, released in JoltPhysics.js 1.1.0-bw.4)
+
+`RackAndPinionConstraint` ties the pinion's WORLD rotation rate to the rack's WORLD velocity (w1 . a = r v2 . b). That
+holds only while the frame carrying both is at rest. On a robot that turns or drives, the frame's own motion is read as
+pinion rotation or rack travel: Brickwright's forklift carriage was pushed to its end stop and tipped the machine as
+the robot turned, and a car's steering rack twisted the car (so the differential car steered by a direct kingpin).
+
+The new `RackMeshConstraint` (`Physics/Constraints/RackMeshConstraint.{h,cpp}`) does for a rack what
+`GearMeshConstraint` does for gears: the relation holds relative to the frames, taken from the pinion's hinge and the
+rack's slider (`SetConstraints(hinge, slider)`; each joint's other body is that part's frame):
+
+  (w_pinion - W_Fp) . a = r (v_rack - v_Fr - W_Fr x (x_rack - x_Fr)) . b
+
+Jacobian rows: pinion angular a; pinion frame angular -a; rack linear -r b; rack frame linear r b and angular
+(x_rack - x_Fr) x r b (one row when both frames are the same body). The impulse is a couple on pinion and frame and an
+equal and opposite force pair along b through the rack's centre of mass: linear and angular momentum are conserved
+and the reaction reaches the frame. The position solve removes the drift of the joints' relative angle/travel since
+the last `SetConstraints` (Brickwright re-bases it before every step, as for the gear meshes). Without
+`SetConstraints` the frames count as at rest: RackAndPinionConstraint's equation. `RackAndPinionConstraint` itself is
+unchanged (the regression scene's hash is unchanged); settings and conventions are the same (body 1 the pinion,
+body 2 the rack, mRatio rad per metre). Measured (JoltPhysics.js `brickwright/verify.mjs` scene H, 60 Hz, 1 s): a
+chassis spinning at 3 rad/s or driving at 0.3 m/s with the pinion held keeps the rack where it was (|slide| < 1e-8 m;
+RackAndPinionConstraint: 38 mm and -261 mm); with the pinion turned 2 rad by its motor the rack travels r·θ (16.0 mm).
+
 ## Results (JoltPhysics.js wasm-compat, 60 Hz, `brickwright/verify.mjs`)
 
 | Scene | 1.1.0 `GearConstraint` | fork `GearConstraint` | fork `GearMeshConstraint` |

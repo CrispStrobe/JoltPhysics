@@ -46,6 +46,7 @@ enum class EConstraintSubType
 	Gear,
 	Pulley,
 	GearMesh,					///< Brickwright fork addition (see BRICKWRIGHT.md)
+	RackMesh,					///< Brickwright fork addition (see BRICKWRIGHT.md)
 
 	/// User defined constraint types start here
 	User1,
