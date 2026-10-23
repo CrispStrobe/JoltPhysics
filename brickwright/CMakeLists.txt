@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.20)
+project(RopeImpulseProbe LANGUAGES CXX)
+get_filename_component(PHYSICS_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+set(OBJECT_LAYER_BITS 32)
+set(INTERPROCEDURAL_OPTIMIZATION OFF)
+include("${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake")
+add_executable(rope-impulse-probe distance-impulse-probe.cpp)
+target_link_libraries(rope-impulse-probe PRIVATE Jolt)

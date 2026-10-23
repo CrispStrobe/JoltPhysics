@@ -85,6 +85,13 @@ public:
 	///@name Get Lagrange multiplier from last physics update (the linear impulse applied to satisfy the constraint)
 	inline float				GetTotalLambdaPosition() const								{ return mAxisConstraint.GetTotalLambda(); }
 
+	/// Signed linear impulse applied during the last velocity solve, retained across
+	/// position correction. GetTotalLambdaPosition may be cleared when a unilateral
+	/// limit becomes inactive during that correction. This observation does not
+	/// participate in warm starting or the solver. It is reset by velocity setup,
+	/// ResetWarmStart and RestoreState; sleeping constraints retain their last solve.
+	inline float				GetLastVelocityImpulse() const								{ return mLastVelocityImpulse; }
+
 private:
 	// Internal helper function to calculate the values below
 	void						CalculateConstraintProperties(float inDeltaTime);
@@ -103,6 +110,9 @@ private:
 	SpringSettings				mLimitsSpringSettings;
 
 	// RUN TIME PROPERTIES FOLLOW
+
+	// Observation only: never fed back into the axis constraint or serialized state.
+	float						mLastVelocityImpulse = 0.0f;
 
 	// World space positions and normal
 	RVec3						mWorldSpacePosition1;

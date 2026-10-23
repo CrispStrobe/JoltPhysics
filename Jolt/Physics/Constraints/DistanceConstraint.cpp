@@ -158,23 +158,30 @@ void DistanceConstraint::CalculateConstraintProperties(float inDeltaTime)
 
 void DistanceConstraint::SetupVelocityConstraint(float inDeltaTime)
 {
+	mLastVelocityImpulse = 0.0f;
 	CalculateConstraintProperties(inDeltaTime);
 }
 
 void DistanceConstraint::ResetWarmStart()
 {
+	mLastVelocityImpulse = 0.0f;
 	mAxisConstraint.Deactivate();
 }
 
 void DistanceConstraint::WarmStartVelocityConstraint(float inWarmStartImpulseRatio)
 {
 	mAxisConstraint.WarmStart(*mBody1, *mBody2, mWorldSpaceNormal, inWarmStartImpulseRatio);
+	mLastVelocityImpulse = mAxisConstraint.GetTotalLambda();
 }
 
 bool DistanceConstraint::SolveVelocityConstraint(float inDeltaTime)
 {
 	if (mAxisConstraint.IsActive())
-		return mAxisConstraint.SolveVelocityConstraint(*mBody1, *mBody2, mWorldSpaceNormal, mMinLambda, mMaxLambda);
+	{
+		bool changed = mAxisConstraint.SolveVelocityConstraint(*mBody1, *mBody2, mWorldSpaceNormal, mMinLambda, mMaxLambda);
+		mLastVelocityImpulse = mAxisConstraint.GetTotalLambda();
+		return changed;
+	}
 	else
 		return false;
 }
@@ -244,6 +251,7 @@ void DistanceConstraint::SaveState(StateRecorder &inStream) const
 
 void DistanceConstraint::RestoreState(StateRecorder &inStream)
 {
+	mLastVelocityImpulse = 0.0f;
 	TwoBodyConstraint::RestoreState(inStream);
 
 	mAxisConstraint.RestoreState(inStream);
