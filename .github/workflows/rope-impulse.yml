@@ -1,0 +1,48 @@
+name: Native rope impulse observation
+on:
+  push:
+    branches: ['brickwright/rope-impulse-observation-*']
+  pull_request:
+    paths: ['Jolt/Physics/Constraints/DistanceConstraint.*', 'brickwright/**', '.github/workflows/rope-impulse.yml']
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: producer
+          sparse-checkout: |
+            Jolt
+            brickwright
+      - uses: actions/checkout@v4
+        with:
+          ref: 1631b9560107698561c010c26a5723c9ff0eca78
+          path: baseline
+          sparse-checkout: Jolt
+      - name: Build both unchanged-physics producers
+        run: |
+          cmake -S producer/brickwright -B fixed -DCMAKE_BUILD_TYPE=Release
+          cmake --build fixed --parallel 2
+          cmake -S producer/brickwright -B old -DCMAKE_BUILD_TYPE=Release -DBW_PHYSICS_ROOT="$GITHUB_WORKSPACE/baseline" -DBW_DISTANCE_IMPULSE_BASELINE=ON
+          cmake --build old --parallel 2
+      - name: Original failure, repaired observations, and identical trajectories
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixed/rope-impulse-probe --trace fixed-poses.csv
+          set +e
+          old/rope-impulse-probe --trace old-poses.csv
+          original=$?
+          fixed/rope-impulse-probe --legacy
+          mutation=$?
+          set -e
+          test "$original" -eq 1
+          test "$mutation" -eq 1
+          cmp old-poses.csv fixed-poses.csv
