@@ -32,6 +32,7 @@ JPH_IMPLEMENT_SERIALIZABLE_VIRTUAL(HingeConstraintSettings)
 	JPH_ADD_ATTRIBUTE(HingeConstraintSettings, mLimitsSpringSettings)
 	JPH_ADD_ATTRIBUTE(HingeConstraintSettings, mMaxFrictionTorque)
 	JPH_ADD_ATTRIBUTE(HingeConstraintSettings, mMotorSettings)
+	JPH_ADD_ATTRIBUTE(HingeConstraintSettings, mReflectedRotorInertia)
 }
 
 void HingeConstraintSettings::SaveBinaryState(StreamOut &inStream) const
@@ -50,6 +51,7 @@ void HingeConstraintSettings::SaveBinaryState(StreamOut &inStream) const
 	inStream.Write(mMaxFrictionTorque);
 	mLimitsSpringSettings.SaveBinaryState(inStream);
 	mMotorSettings.SaveBinaryState(inStream);
+	inStream.Write(mReflectedRotorInertia);
 }
 
 void HingeConstraintSettings::RestoreBinaryState(StreamIn &inStream)
@@ -67,10 +69,14 @@ void HingeConstraintSettings::RestoreBinaryState(StreamIn &inStream)
 	inStream.Read(mLimitsMax);
 	inStream.Read(mMaxFrictionTorque);
 	mLimitsSpringSettings.RestoreBinaryState(inStream);
-	mMotorSettings.RestoreBinaryState(inStream);}
+	mMotorSettings.RestoreBinaryState(inStream);
+	inStream.Read(mReflectedRotorInertia);
+}
 
 TwoBodyConstraint *HingeConstraintSettings::Create(Body &inBody1, Body &inBody2) const
 {
+	if (!std::isfinite(mReflectedRotorInertia) || mReflectedRotorInertia < 0.0f)
+		return nullptr;
 	return new HingeConstraint(inBody1, inBody2, *this);
 }
 
@@ -116,6 +122,17 @@ HingeConstraint::HingeConstraint(Body &inBody1, Body &inBody2, const HingeConstr
 
 	// Store spring settings
 	SetLimitsSpringSettings(inSettings.mLimitsSpringSettings);
+	// Direct constructor callers have the same valid-settings precondition as
+	// other hinge properties. Settings::Create rejects invalid Jr in all builds.
+	bool valid_rotor = SetReflectedRotorInertia(inSettings.mReflectedRotorInertia);
+	JPH_ASSERT(valid_rotor);
+	(void)valid_rotor;
+}
+
+bool HingeConstraint::SetReflectedRotorInertia(float inInertia)
+{
+	Vec3 axis = mBody1->GetRotation() * mLocalSpaceHingeAxis1;
+	return mRotorConstraintPart.SetInertia(inInertia, axis.Dot(mBody2->GetAngularVelocity() - mBody1->GetAngularVelocity()));
 }
 
 void HingeConstraint::NotifyShapeChanged(const BodyID &inBodyID, Vec3Arg inDeltaCOM)
@@ -164,7 +181,7 @@ void HingeConstraint::SetLimits(float inLimitsMin, float inLimitsMax)
 
 void HingeConstraint::CalculateA1AndTheta()
 {
-	if (mHasLimits || mMotorState != EMotorState::Off || mMaxFrictionTorque > 0.0f)
+	if (mHasLimits || mMotorState != EMotorState::Off || mMaxFrictionTorque > 0.0f || mRotorConstraintPart.GetInertia() > 0.0f)
 	{
 		Quat rotation1 = mBody1->GetRotation();
 
@@ -243,6 +260,8 @@ void HingeConstraint::SetupVelocityConstraint(float inDeltaTime)
 	CalculateA1AndTheta();
 	CalculateRotationLimitsConstraintProperties(inDeltaTime);
 	CalculateMotorConstraintProperties(inDeltaTime);
+	if (mRotorConstraintPart.GetInertia() > 0.0f)
+		mRotorConstraintPart.CalculateConstraintProperties(*mBody1, *mBody2, mA1);
 }
 
 void HingeConstraint::ResetWarmStart()
@@ -251,12 +270,15 @@ void HingeConstraint::ResetWarmStart()
 	mPointConstraintPart.Deactivate();
 	mRotationConstraintPart.Deactivate();
 	mRotationLimitsConstraintPart.Deactivate();
+	mRotorConstraintPart.ResetWarmStart();
 }
 
 void HingeConstraint::WarmStartVelocityConstraint(float inWarmStartImpulseRatio)
 {
 	// Warm starting: Apply previous frame impulse
 	mMotorConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
+	if (mRotorConstraintPart.GetInertia() > 0.0f)
+		mRotorConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
 	mPointConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
 	mRotationConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
 	mRotationLimitsConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
@@ -299,6 +321,10 @@ bool HingeConstraint::SolveVelocityConstraint(float inDeltaTime)
 		}
 	}
 
+	// The rotor participates inside the iteration, before point/transverse rows.
+	// No post-step velocity kick can reopen those neighboring constraints.
+	bool rotor = mRotorConstraintPart.GetInertia() > 0.0f && mRotorConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2, mA1);
+
 	// Solve point constraint
 	bool pos = mPointConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2);
 
@@ -328,7 +354,7 @@ bool HingeConstraint::SolveVelocityConstraint(float inDeltaTime)
 		limit = mRotationLimitsConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2, mA1, min_lambda, max_lambda);
 	}
 
-	return motor || pos || rot || limit;
+	return motor || rotor || pos || rot || limit;
 }
 
 bool HingeConstraint::SolvePositionConstraint(float inDeltaTime, float inBaumgarte)
@@ -402,6 +428,7 @@ void HingeConstraint::SaveState(StateRecorder &inStream) const
 	inStream.Write(mMotorState);
 	inStream.Write(mTargetAngularVelocity);
 	inStream.Write(mTargetAngle);
+	mRotorConstraintPart.SaveState(inStream);
 }
 
 void HingeConstraint::RestoreState(StateRecorder &inStream)
@@ -416,6 +443,7 @@ void HingeConstraint::RestoreState(StateRecorder &inStream)
 	inStream.Read(mMotorState);
 	inStream.Read(mTargetAngularVelocity);
 	inStream.Read(mTargetAngle);
+	mRotorConstraintPart.RestoreState(inStream);
 }
 
 
@@ -435,6 +463,7 @@ Ref<ConstraintSettings> HingeConstraint::GetConstraintSettings() const
 	settings->mLimitsSpringSettings = mLimitsSpringSettings;
 	settings->mMaxFrictionTorque = mMaxFrictionTorque;
 	settings->mMotorSettings = mMotorSettings;
+	settings->mReflectedRotorInertia = mRotorConstraintPart.GetInertia();
 	return settings;
 }
 

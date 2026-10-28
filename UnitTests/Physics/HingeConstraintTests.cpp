@@ -7,9 +7,53 @@
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include "Layers.h"
+#include <Jolt/Physics/StateRecorderImpl.h>
+#include <limits>
 
 TEST_SUITE("HingeConstraintTests")
 {
+	TEST_CASE("TestReflectedRotorConfigurationAndState")
+	{
+		PhysicsTestContext context;
+		context.ZeroGravity();
+		Body &body = context.CreateSphere(RVec3::sZero(), 0.1f, EMotionType::Dynamic, EMotionQuality::Discrete, Layers::MOVING);
+		context.GetBodyInterface().SetAngularVelocity(body.GetID(), 3.0f * Vec3::sAxisY());
+		HingeConstraintSettings settings;
+		settings.mReflectedRotorInertia = 0.25f;
+		HingeConstraint &hinge = context.CreateConstraint<HingeConstraint>(Body::sFixedToWorld, body, settings);
+		CHECK(hinge.GetReflectedRotorInertia() == 0.25f);
+		CHECK(hinge.GetRotorAngularVelocity() == 3.0f);
+		CHECK(hinge.SetReflectedRotorInertia(0.25f));
+		CHECK(hinge.GetRotorAngularVelocity() == 3.0f);
+		CHECK_FALSE(hinge.SetReflectedRotorInertia(-1.0f));
+		CHECK_FALSE(hinge.SetReflectedRotorInertia(std::numeric_limits<float>::infinity()));
+		CHECK_FALSE(hinge.SetReflectedRotorInertia(std::numeric_limits<float>::quiet_NaN()));
+		CHECK(hinge.GetReflectedRotorInertia() == 0.25f);
+		StateRecorderImpl state;
+		hinge.SaveState(state);
+		CHECK(hinge.SetReflectedRotorInertia(0.0f));
+		CHECK(hinge.GetRotorAngularVelocity() == 0.0f);
+		state.Rewind();
+		hinge.RestoreState(state);
+		CHECK(hinge.GetReflectedRotorInertia() == 0.25f);
+		CHECK(hinge.GetRotorAngularVelocity() == 3.0f);
+		settings.mReflectedRotorInertia = -1.0f;
+		CHECK(settings.Create(Body::sFixedToWorld, body) == nullptr);
+	}
+
+	TEST_CASE("TestReflectedRotorSettingsBinaryRoundTrip")
+	{
+		HingeConstraintSettings settings;
+		CHECK(settings.mReflectedRotorInertia == 0.0f);
+		settings.mReflectedRotorInertia = 0.125f;
+		StateRecorderImpl stream;
+		settings.SaveBinaryState(stream);
+		stream.Rewind();
+		auto restored = ConstraintSettings::sRestoreFromBinaryState(stream);
+		REQUIRE_FALSE(restored.HasError());
+		CHECK(static_cast<HingeConstraintSettings *>(restored.Get().GetPtr())->mReflectedRotorInertia == 0.125f);
+	}
+
 	// Test if the hinge constraint can be used to create a spring
 	TEST_CASE("TestHingeSpring")
 	{

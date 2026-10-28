@@ -1,5 +1,24 @@
 # Brickwright fork of Jolt Physics
 
+## Unreleased native reflected axial rotor candidate
+
+The optional hinge scalar element is described in
+[`brickwright/rotor-inertia/README.md`](brickwright/rotor-inertia/README.md).
+Default zero retains the original hinge solve path. Positive inertia adds a
+native velocity row inside every ordinary iteration, without changing body
+mass, COM or bare inertia. The motor's common world axis and native impulse
+sign are retained. It is an ideal axial model, not measured hardware behavior.
+
+The native probe and existing hinge units are prepared but have not been
+compiled or executed at this source checkpoint. Their hosted workflow retains
+failure originals, independent before/after state facts, disabled-row controls
+and exact paired zero-inertia trajectories. Existing rope, gear, determinism,
+contact and later Lite model/browser qualification remain required. No npm
+release, dependency pin or solver iteration/timestep/material change occurs
+here. Snapshot/settings formats now include rotor state; compatibility with
+old binary state formats is not claimed.
+
+
 Branch `brickwright/gear-mesh-master` = upstream **master** at `01adafba0` (after v5.6.0; includes 64-bit
 ObjectLayers #2163, `EstimateCollisionResponse` with `ContactSettings` #2166 and the denormal effective-mass guard
 #2105) plus the same gear changes as `brickwright/gear-mesh` (which is v5.6.0 `e77f175` + the gear changes and is

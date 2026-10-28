@@ -1,0 +1,85 @@
+name: Native relative rotor inertia
+on:
+  pull_request:
+    paths:
+      - 'Jolt/Physics/Constraints/HingeConstraint.*'
+      - 'Jolt/Physics/Constraints/ConstraintPart/RotationalInertiaConstraintPart.h'
+      - 'UnitTests/Physics/HingeConstraintTests.cpp'
+      - 'brickwright/rotor-inertia/**'
+      - '.github/workflows/relative-rotor.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: producer
+          sparse-checkout: |
+            Jolt
+            UnitTests
+            brickwright/rotor-inertia
+      - uses: actions/checkout@v4
+        with:
+          ref: 389854fb7912d814112ce46b5a3cda63490e70b3
+          path: baseline
+          sparse-checkout: Jolt
+      - name: Bind actual checkout and runtime metadata
+        shell: bash
+        run: |
+          mkdir evidence
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,platform,subprocess
+          def git(root,*args):return subprocess.check_output(['git','-C',root,*args],text=True).strip()
+          paths=['Jolt/Physics/Constraints/HingeConstraint.h','Jolt/Physics/Constraints/HingeConstraint.cpp','Jolt/Physics/Constraints/ConstraintPart/RotationalInertiaConstraintPart.h','brickwright/rotor-inertia/probe.cpp']
+          manifest={'producer':git('producer','rev-parse','HEAD'),'producerTree':git('producer','rev-parse','HEAD^{tree}'),'baseline':git('baseline','rev-parse','HEAD'),'baselineTree':git('baseline','rev-parse','HEAD^{tree}'),'eventHead':os.environ['GITHUB_SHA'],'python':platform.python_version(),'machine':platform.machine(),'inputs':{p:hashlib.sha256((pathlib.Path('producer')/p).read_bytes()).hexdigest() for p in paths}}
+          pathlib.Path('evidence/source-runtime.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          PY
+          c++ --version > evidence/compiler.txt
+      - name: Build native probe and focused existing hinge unit tests
+        shell: bash
+        run: |
+          producer_sha=$(git -C producer rev-parse HEAD)
+          baseline_sha=$(git -C baseline rev-parse HEAD)
+          cmake -S producer/brickwright/rotor-inertia -B fixed -DCMAKE_BUILD_TYPE=Release -DBW_NATIVE_SOURCE_SHA="$producer_sha" -DBW_PROBE_SOURCE_SHA="$producer_sha"
+          cmake --build fixed --parallel 2
+          cmake -S producer/brickwright/rotor-inertia -B old -DCMAKE_BUILD_TYPE=Release -DBW_PHYSICS_ROOT="$GITHUB_WORKSPACE/baseline" -DBW_ROTOR_BASELINE=ON -DBW_NATIVE_SOURCE_SHA="$baseline_sha" -DBW_PROBE_SOURCE_SHA="$producer_sha"
+          cmake --build old --parallel 2
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          paths=['fixed/rotor-inertia-probe','fixed/rotor-hinge-unit-tests','old/rotor-inertia-probe']
+          pathlib.Path('evidence/binary-sha256.json').write_text(json.dumps({p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in paths},indent=2)+'\n')
+          PY
+      - name: Preserve all native outcomes and causal zero controls
+        shell: bash
+        run: |
+          set +e
+          fixed/rotor-inertia-probe > evidence/candidate.log 2>&1
+          candidate=$?
+          fixed/rotor-hinge-unit-tests --test-suite=HingeConstraintTests > evidence/hinge-units.log 2>&1
+          units=$?
+          fixed/rotor-inertia-probe --disable-rotor-control > evidence/disabled-row.log 2>&1
+          disabled=$?
+          fixed/rotor-inertia-probe --zero-only --trace evidence/zero-candidate.csv > evidence/zero-candidate.log 2>&1
+          zero_candidate=$?
+          old/rotor-inertia-probe --zero-only --trace evidence/zero-baseline.csv > evidence/zero-baseline.log 2>&1
+          zero_baseline=$?
+          cmp evidence/zero-candidate.csv evidence/zero-baseline.csv
+          zero_equal=$?
+          python3 - "$candidate" "$units" "$disabled" "$zero_candidate" "$zero_baseline" "$zero_equal" <<'PY'
+          import json,pathlib,sys
+          names=['candidate','hingeUnits','disabledRow','zeroCandidate','zeroBaseline','zeroTraceComparison']
+          result=dict(zip(names,map(int,sys.argv[1:])))
+          pathlib.Path('evidence/status.json').write_text(json.dumps(result,indent=2)+'\n')
+          sys.exit(0 if all(result[k]==0 for k in names if k!='disabledRow') and result['disabledRow']==1 else 1)
+          PY
+      - name: Retain bounded evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-relative-rotor-evidence
+          path: evidence/
+          if-no-files-found: error

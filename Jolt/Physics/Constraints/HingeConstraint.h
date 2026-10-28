@@ -9,6 +9,7 @@
 #include <Jolt/Physics/Constraints/ConstraintPart/PointConstraintPart.h>
 #include <Jolt/Physics/Constraints/ConstraintPart/HingeRotationConstraintPart.h>
 #include <Jolt/Physics/Constraints/ConstraintPart/AngleConstraintPart.h>
+#include <Jolt/Physics/Constraints/ConstraintPart/RotationalInertiaConstraintPart.h>
 
 JPH_NAMESPACE_BEGIN
 
@@ -55,6 +56,10 @@ public:
 
 	/// In case the constraint is powered, this determines the motor settings around the hinge axis
 	MotorSettings				mMotorSettings;
+
+	/// Optional ideal reflected axial rotor inertia (kg m^2). Finite and non-negative.
+	/// Zero preserves the original hinge behavior. Invalid settings make Create return null.
+	float						mReflectedRotorInertia = 0.0f;
 
 protected:
 	// See: ConstraintSettings::RestoreBinaryState
@@ -145,6 +150,16 @@ public:
 	inline float				GetTotalLambdaRotationLimits() const					{ return mRotationLimitsConstraintPart.GetTotalLambda(); }
 	inline float				GetTotalLambdaMotor() const								{ return mMotorConstraintPart.GetTotalLambda(); }
 
+	/// Configure outside Update. False for negative/non-finite values, leaving state unchanged.
+	/// Same value is idempotent. Enabling initializes scalar speed from the current hinge
+	/// rate; changing positive inertia preserves speed; disabling drops scalar energy.
+	/// Like motor setters this does not wake bodies: caller must ActivateBody as needed.
+	bool						SetReflectedRotorInertia(float inInertia);
+	float						GetReflectedRotorInertia() const { return mRotorConstraintPart.GetInertia(); }
+	float						GetRotorAngularVelocity() const { return mRotorConstraintPart.GetRotorSpeed(); }
+	/// Current rotor-row impulse in N m s, separate from motor/friction effort.
+	float						GetTotalLambdaRotor() const { return mRotorConstraintPart.GetTotalLambda(); }
+
 private:
 	// Internal helper function to calculate the values below
 	void						CalculateA1AndTheta();
@@ -200,6 +215,7 @@ private:
 	HingeRotationConstraintPart mRotationConstraintPart;
 	AngleConstraintPart			mRotationLimitsConstraintPart;
 	AngleConstraintPart			mMotorConstraintPart;
+	RotationalInertiaConstraintPart mRotorConstraintPart;
 };
 
 JPH_NAMESPACE_END
