@@ -149,9 +149,18 @@ static void ConstraintControls(float jr){
  RVec3 point(.01f,.025f,0);auto &h=w.Hinge(a,b,point,Vec3::sAxisY(),jr);auto &neighbor=w.Hinge(b,c,RVec3(.02f,.075f,0),Vec3::sAxisX());
  Vec3 la=a.GetRotation().Conjugated()*Vec3(point-a.GetCenterOfMassPosition()),lb=b.GetRotation().Conjugated()*Vec3(point-b.GetCenterOfMassPosition());
  h.GetMotorSettings().mMinTorqueLimit=-.2f;h.GetMotorSettings().mMaxTorqueLimit=.2f;h.SetMotorState(EMotorState::Velocity);h.SetTargetAngularVelocity(3);
- float angular=0,pointError=0;
- for(int i=0;i<200;i++){w.Step();Vec3 axis=b.GetRotation()*neighbor.GetLocalSpaceHingeAxis1(),relative=b.GetAngularVelocity()-c.GetAngularVelocity();angular=std::max(angular,(relative-axis*relative.Dot(axis)).Length());pointError=std::max(pointError,PointError(a,b,la,lb));}
- std::cout<<"ordinaryNeighborTransverse="<<angular<<" anchorPointVelocity="<<pointError<<'\n';
+ float angular=0,pointError=0,postAngular=0,postPoint=0;
+ for(int i=0;i<200;i++){
+  // SetupVelocityConstraint caches these Jacobians before integration. Compare
+  // solved velocities in that same frame, not the subsequently moved poses.
+  Vec3 axis=b.GetRotation()*neighbor.GetLocalSpaceHingeAxis1(),ra=a.GetRotation()*la,rb=b.GetRotation()*lb;
+  w.Step();Vec3 relative=b.GetAngularVelocity()-c.GetAngularVelocity();
+  angular=std::max(angular,(relative-axis*relative.Dot(axis)).Length());
+  pointError=std::max(pointError,(a.GetLinearVelocity()+a.GetAngularVelocity().Cross(ra)-b.GetLinearVelocity()-b.GetAngularVelocity().Cross(rb)).Length());
+  Vec3 postAxis=b.GetRotation()*neighbor.GetLocalSpaceHingeAxis1();
+  postAngular=std::max(postAngular,(relative-postAxis*relative.Dot(postAxis)).Length());postPoint=std::max(postPoint,PointError(a,b,la,lb));
+ }
+ std::cout<<"ordinaryNeighborTransverse="<<angular<<" anchorPointVelocity="<<pointError<<" postPoseGeometricTransverse="<<postAngular<<" postPoseGeometricPointVelocity="<<postPoint<<'\n';
  Check(std::abs(h.GetCurrentAngle())>.1f,"constraint controls actually driven");Check(angular<1e-4f,"ordinary neighboring transverse hinge <=1e-4 rad/s");Check(pointError<1e-4f,"anisotropic offset hinge anchor-point <=1e-4 m/s");
 }
 static void SharedAndConfiguration(){

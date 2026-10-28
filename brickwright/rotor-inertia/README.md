@@ -62,3 +62,11 @@ restore events, or assume a sleeping constraint's retained impulse was applied
 again. These records support standalone readers; test PASS alone is not an
 independent geometric or raw-state audit. Browser/model/release qualification
 and original Sarrus/collision/hub endpoint assertions remain separate gates.
+
+Velocity-residual observers use the pre-update hinge axis and rotated local
+anchor arms with the solved post-update velocities. Native velocity setup caches
+these Jacobians before pose integration; position correction follows integration.
+Post-pose geometric velocity residuals are reported separately and are not the
+velocity solver residual. Momentum, energy and position observations retain their
+actual post-update states. The original observer failure output remains evidence;
+this correction changes no solver, fixture command, iteration or threshold.
