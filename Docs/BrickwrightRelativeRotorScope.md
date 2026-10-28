@@ -1,11 +1,18 @@
 # Brickwright relative rotor inertia: native scope
 
-Status: CLAIMED — documentation only; merge before implementation.
+Status: CLAIMED — native source candidate; hosted qualification pending.
 Owner: Codex, authorized Robot Lab physics continuation.
 Integration target: `brickwright/gear-mesh-master` at
 `389854fb7912d814112ce46b5a3cda63490e70b3`. Its complete source tree equals
 released native `84f66c4dd4cb18f4c7be1bfdedb3d9f6d86ac5ff`.
 This explicitly retains the owned fork's release lineage.
+
+Source branch: `lane/relative-rotor-native-20261028`, based on merged claim
+`ca0e9f8f`. Optional native hinge scalar, API/settings/state serialization,
+focused unit cases, bounded before/after-state probe and hosted workflow are
+implemented for review. No native compilation or execution has occurred at
+this source checkpoint. Zero-inertia baseline, original guard and all affected
+qualification gates remain required. Bindings and release pins stay separate.
 
 The [Lite rotor correction](https://github.com/CrispStrobe/brickwright-lite/tree/lane/robot-rotor-correction-successor-20261028)
 remains rejected for general use. A clean, bounded Node 22 / released bw.7
