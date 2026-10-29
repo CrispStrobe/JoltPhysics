@@ -54,6 +54,31 @@ TEST_SUITE("HingeConstraintTests")
 		CHECK(static_cast<HingeConstraintSettings *>(restored.Get().GetPtr())->mReflectedRotorInertia == 0.125f);
 	}
 
+	TEST_CASE("TestCoupledRotorSoftMotorSingleIteration")
+	{
+		PhysicsTestContext context;
+		context.ZeroGravity();
+		Body &body = context.CreateSphere(RVec3::sZero(), 0.005f, EMotionType::Dynamic, EMotionQuality::Discrete, Layers::MOVING);
+		context.GetBodyInterface().SetAngularVelocity(body.GetID(), Vec3::sAxisY());
+		HingeConstraintSettings settings;
+		settings.mReflectedRotorInertia = 0.0004529942571492882f;
+		HingeConstraint &hinge = context.CreateConstraint<HingeConstraint>(Body::sFixedToWorld, body, settings);
+		constexpr float dt = 0.005f, c = 0.007881959086455769f;
+		auto &motor = hinge.GetMotorSettings();
+		motor.mSpringSettings.mMode = ESpringMode::StiffnessAndDamping;
+		motor.mSpringSettings.mStiffness = c / (2 * dt);
+		motor.mSpringSettings.mDamping = c / 2;
+		hinge.SetMotorState(EMotorState::Position);
+		hinge.SetTargetAngle(hinge.GetCurrentAngle());
+		hinge.SetupVelocityConstraint(dt);
+		hinge.WarmStartVelocityConstraint(0.0f);
+		hinge.SolveVelocityConstraint(dt);
+		float velocity = body.GetAngularVelocity().GetY();
+		CHECK(std::abs(velocity + hinge.GetTotalLambdaMotor() / (dt * c)) <= 1.0e-4f);
+		CHECK(std::abs(velocity - hinge.GetRotorAngularVelocity()) <= 1.0e-4f);
+		CHECK(hinge.GetTotalLambdaMotor() * velocity <= 0.0f);
+	}
+
 	// Test if the hinge constraint can be used to create a spring
 	TEST_CASE("TestHingeSpring")
 	{

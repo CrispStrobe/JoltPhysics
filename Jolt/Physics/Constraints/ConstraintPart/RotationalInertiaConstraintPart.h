@@ -5,6 +5,7 @@
 #pragma once
 
 #include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Constraints/ConstraintPart/AngleConstraintPart.h>
 #include <Jolt/Physics/StateRecorder.h>
 #include <cmath>
 
@@ -63,6 +64,53 @@ public:
 		mTotalLambda += lambda;
 		return Apply(ioBody1, ioBody2, lambda);
 	}
+	/// Preserve each scaled warmstart impulse, but avoid two cancelling body kicks.
+	void WarmStartMotor(Body &ioBody1, Body &ioBody2, AngleConstraintPart &ioMotor, float inRatio)
+	{
+		if (mEffectiveMass == 0.0)
+		{
+			ioMotor.WarmStart(ioBody1, ioBody2, inRatio);
+			return;
+		}
+		float motor = ioMotor.GetTotalLambda() * inRatio;
+		mTotalLambda *= inRatio;
+		mRotorSpeed -= float(double(mTotalLambda) / double(mInertia));
+		ioMotor.ApplyCoupledVelocityStep(ioBody1, ioBody2, motor, float(double(motor) + double(mTotalLambda)));
+	}
+
+	/// Solve the common body Jacobian as a two-row block. Other hinge rows still
+	/// participate in the ordinary island iterations; no body inertia is changed.
+	bool SolveMotorVelocityConstraint(Body &ioBody1, Body &ioBody2, Vec3Arg inAxis,
+		AngleConstraintPart &ioMotor, float inMinLambda, float inMaxLambda)
+	{
+		if (mEffectiveMass == 0.0)
+			return ioMotor.SolveVelocityConstraint(ioBody1, ioBody2, inAxis, inMinLambda, inMaxLambda);
+		double s = ioMotor.GetInverseEffectiveMass(inAxis);
+		double r = 1.0 / double(mInertia);
+		double sr = s + r;
+		double gamma = ioMotor.GetSoftness();
+		// Stable Schur complement: avoid subtracting two nearly equal bare mobilities.
+		double denominator = gamma + s * (r / sr);
+		if (!(denominator > 0.0))
+			return false; // No dynamic body response and no soft motor row.
+		double v = inAxis.Dot(ioBody2.GetAngularVelocity() - ioBody1.GetAngularVelocity());
+		double rotor_error = v - double(mRotorSpeed);
+		double motor_error = v + double(ioMotor.GetAccumulatedBias());
+		double motor_delta = -(motor_error - (s / sr) * rotor_error) / denominator;
+		float old_motor = ioMotor.GetTotalLambda();
+		float new_motor = Clamp(float(double(old_motor) + motor_delta), inMinLambda, inMaxLambda);
+		float actual_motor_delta = new_motor - old_motor;
+		double rotor_delta = -(rotor_error + s * double(actual_motor_delta)) / sr;
+		// Apply the physical double increment before rounding the diagnostic total.
+		// Recovering it from a rounded accumulated lambda loses light-shaft response.
+		mTotalLambda = float(double(mTotalLambda) + rotor_delta);
+		mRotorSpeed = float(double(mRotorSpeed) - rotor_delta / double(mInertia));
+		// Algebraically delta_motor + delta_rotor, without their cancellation.
+		double body_delta = (r * double(actual_motor_delta) - rotor_error) / sr;
+		bool changed = ioMotor.ApplyCoupledVelocityStep(ioBody1, ioBody2, new_motor, float(body_delta));
+		return changed || rotor_delta != 0.0;
+	}
+
 	void SaveState(StateRecorder &inStream) const
 	{
 		inStream.Write(mInertia);

@@ -201,3 +201,12 @@ No local build was used: the C++ is compiled by the JoltPhysics.js fork's GitHub
 (`.github/workflows/brickwright-release.yml`, emsdk 6.0.2 as upstream), which fetches this branch at a pinned commit.
 A native build works as upstream (`cd Build && ./cmake_linux_clang_gcc.sh`). The GearMesh enum value is inserted
 after `Pulley`, shifting `User1..4` by one (nothing in Jolt or JoltPhysics.js depends on their numeric values).
+
+
+### Coupled rotor/motor source candidate
+
+The scoped two-row motor/rotor candidate and paired read-only afdb observer
+control are prepared under `Docs/BrickwrightRotorMotorBlockScope.md`.
+Compilation, native qualification, binding packages and affected consumer
+endpoints remain pending. No new pin, release, or all-model acceptance follows
+from this source checkpoint.

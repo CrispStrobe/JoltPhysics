@@ -276,9 +276,14 @@ void HingeConstraint::ResetWarmStart()
 void HingeConstraint::WarmStartVelocityConstraint(float inWarmStartImpulseRatio)
 {
 	// Warm starting: Apply previous frame impulse
-	mMotorConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
-	if (mRotorConstraintPart.GetInertia() > 0.0f)
-		mRotorConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
+	if (mRotorConstraintPart.GetInertia() > 0.0f && mMotorConstraintPart.IsActive())
+		mRotorConstraintPart.WarmStartMotor(*mBody1, *mBody2, mMotorConstraintPart, inWarmStartImpulseRatio);
+	else
+	{
+		mMotorConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
+		if (mRotorConstraintPart.GetInertia() > 0.0f)
+			mRotorConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
+	}
 	mPointConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
 	mRotationConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
 	mRotationLimitsConstraintPart.WarmStart(*mBody1, *mBody2, inWarmStartImpulseRatio);
@@ -300,7 +305,13 @@ bool HingeConstraint::IsMinLimitClosest() const
 
 bool HingeConstraint::SolveVelocityConstraint(float inDeltaTime)
 {
-	// Solve motor
+	// With a rotor, solve the two rows together; their bare-body impulses can
+	// otherwise undo each other for many iterations on a light shaft.
+	bool coupled = mRotorConstraintPart.GetInertia() > 0.0f && mMotorConstraintPart.IsActive();
+	auto solve_motor = [&](float inMin, float inMax) {
+		return coupled? mRotorConstraintPart.SolveMotorVelocityConstraint(*mBody1, *mBody2, mA1, mMotorConstraintPart, inMin, inMax)
+			: mMotorConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2, mA1, inMin, inMax);
+	};
 	bool motor = false;
 	if (mMotorConstraintPart.IsActive())
 	{
@@ -309,21 +320,21 @@ bool HingeConstraint::SolveVelocityConstraint(float inDeltaTime)
 		case EMotorState::Off:
 			{
 				float max_lambda = mMaxFrictionTorque * inDeltaTime;
-				motor = mMotorConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2, mA1, -max_lambda, max_lambda);
+				motor = solve_motor(-max_lambda, max_lambda);
 				break;
 			}
 
 		case EMotorState::Velocity:
 		case EMotorState::Position:
 		case EMotorState::PositionAndVelocity:
-			motor = mMotorConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2, mA1, inDeltaTime * mMotorSettings.mMinTorqueLimit, inDeltaTime * mMotorSettings.mMaxTorqueLimit);
+			motor = solve_motor(inDeltaTime * mMotorSettings.mMinTorqueLimit, inDeltaTime * mMotorSettings.mMaxTorqueLimit);
 			break;
 		}
 	}
 
 	// The rotor participates inside the iteration, before point/transverse rows.
 	// No post-step velocity kick can reopen those neighboring constraints.
-	bool rotor = mRotorConstraintPart.GetInertia() > 0.0f && mRotorConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2, mA1);
+	bool rotor = !coupled && mRotorConstraintPart.GetInertia() > 0.0f && mRotorConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2, mA1);
 
 	// Solve point constraint
 	bool pos = mPointConstraintPart.SolveVelocityConstraint(*mBody1, *mBody2);

@@ -70,3 +70,33 @@ Post-pose geometric velocity residuals are reported separately and are not the
 velocity solver residual. Momentum, energy and position observations retain their
 actual post-update states. The original observer failure output remains evidence;
 this correction changes no solver, fixture command, iteration or threshold.
+
+## Coupled motor/rotor candidate
+
+`--motor-block-only` adds seven bounded 100-step controls: driven/reversing then
+zero-duty braking in both signs, an active motor impulse clamp, and both body orders for static and moving
+kinematic anchors. Kinematic anchors have prescribed 0.2 rad/s axial motion. Parameters
+come from the failed free-motor consumer's bare/reflected inertia ratio and DC
+slope: `dt=0.005`, 30 velocity / 5 position steps. Existing probe iterations and
+assertions are unchanged. A cached Jacobian axis is paired with after-solve
+velocities; post-integration poses do not define the velocity residual frame.
+Motor KKT and rotor residual bounds are `1e-4` rad/s. Zero-duty passivity is
+checked only when actual cached motor bias is zero, using `lambda_motor *
+omega_end`; its declared float budget is 32 machine epsilons times absolute
+motor impulse times `max(1, abs(omega_before), abs(omega_end))`. This is an
+impulse-work numerical budget, not a fitted endpoint allowance or a full-scene
+energy assertion. No-contact rows do not qualify contacts or all models.
+
+The workflow compiles the same probe against the candidate and afdb with the
+read-only `afdb-observer-only.patch`. The preparer verifies the exact afdb base,
+all present tracked bytes/modes, unchanged full-index blob/modes, explicitly
+unmaterialized sparse entries, and the three changed header hashes; no solve,
+state or equation is patched in that baseline. Baseline failure and candidate
+success are both required, alongside every previous native gate. The existing
+bw.7 zero-inertia baseline is retained separately. All first outputs remain in
+the artifact, including failures. A successful expanded artifact has the prior
+11 files plus `afdb-observer-source.json`, `motor-block-candidate.log`,
+`motor-block-afdb.log`, and `motor-block-status.json` (15 files total).
+
+Source preparation is not runtime qualification. The original failed consumer
+endpoint programmes and later built/packed bindings remain separate gates.

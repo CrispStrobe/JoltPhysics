@@ -212,6 +212,18 @@ public:
 		return ApplyVelocityStep(ioBody1, ioBody2, lambda);
 	}
 
+	/// Properties of the cached axial row, for the hinge motor/rotor block only.
+	float GetInverseEffectiveMass(Vec3Arg inAxis) const { return inAxis.Dot(mInvI1_Axis + mInvI2_Axis); }
+	float GetSoftness() const { return mSpringPart.GetSoftness(); }
+	float GetBaseBias() const { return mSpringPart.GetBias(0.0f); }
+	float GetAccumulatedBias() const { return mSpringPart.GetBias(mTotalLambda); }
+	/// Accumulate the motor impulse but apply the summed motor+rotor body impulse once.
+	bool ApplyCoupledVelocityStep(Body &ioBody1, Body &ioBody2, float inNewMotorLambda, float inBodyDelta)
+	{
+		mTotalLambda = inNewMotorLambda;
+		return ApplyVelocityStep(ioBody1, ioBody2, inBodyDelta);
+	}
+
 	/// Return lagrange multiplier
 	float						GetTotalLambda() const
 	{

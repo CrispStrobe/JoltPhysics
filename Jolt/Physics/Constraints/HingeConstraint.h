@@ -150,6 +150,25 @@ public:
 	inline float				GetTotalLambdaRotationLimits() const					{ return mRotationLimitsConstraintPart.GetTotalLambda(); }
 	inline float				GetTotalLambdaMotor() const								{ return mMotorConstraintPart.GetTotalLambda(); }
 
+	/// Read-only last SetupVelocityConstraint row cache; meaningful only in that
+	/// velocity-solve phase. Does not refresh poses, activate bodies or enter state.
+	struct MotorRowProperties
+	{
+		Vec3 mAxis;
+		float mInverseEffectiveMass;
+		float mSoftness;
+		float mBias;
+		bool mActive;
+	};
+	MotorRowProperties GetMotorRowProperties() const
+	{
+		if (!mMotorConstraintPart.IsActive())
+			return {Vec3::sZero(), 0.0f, 0.0f, 0.0f, false};
+		return {mA1, mMotorConstraintPart.GetInverseEffectiveMass(mA1),
+			mMotorConstraintPart.GetSoftness(), mMotorConstraintPart.GetBaseBias(), mMotorConstraintPart.IsActive()};
+	}
+
+
 	/// Configure outside Update. False for negative/non-finite values, leaving state unchanged.
 	/// Same value is idempotent. Enabling initializes scalar speed from the current hinge
 	/// rate; changing positive inertia preserves speed; disabling drops scalar energy.
