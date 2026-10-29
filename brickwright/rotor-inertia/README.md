@@ -80,6 +80,16 @@ come from the failed free-motor consumer's bare/reflected inertia ratio and DC
 slope: `dt=0.005`, 30 velocity / 5 position steps. Existing probe iterations and
 assertions are unchanged. A cached Jacobian axis is paired with after-solve
 velocities; post-integration poses do not define the velocity residual frame.
+The six unlimited cases use 30 positive-command steps, 30 negative-command
+steps, then 40 zero-duty steps (the reversed case reverses command signs).
+The limited case uses 30 positive, 20 negative, then 50 zero-duty steps. Its
+asymmetric schedule preserves motion into braking: equal opposite saturated
+impulses would cancel velocity before the brake phase and make the unchanged
+moving-brake nonvacuity assertion impossible. An independent synthetic reference
+identified that fixture flaw before the first native execution; the original
+symmetric source checkpoint is retained. All seven cases still require actual
+driven motion and actual moving-brake observations.
+
 Motor KKT and rotor residual bounds are `1e-4` rad/s. Zero-duty passivity is
 checked only when actual cached motor bias is zero, using `lambda_motor *
 omega_end`; its declared float budget is 32 machine epsilons times absolute

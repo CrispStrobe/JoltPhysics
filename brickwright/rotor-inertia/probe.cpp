@@ -216,7 +216,7 @@ static void MotorBlockControl(bool limited, bool reverse, EMotionType anchor=EMo
  std::cout<<"MOTOR_BLOCK_CONFIG {\"case\":\""<<w.label<<"\",\"ia\":"<<ia<<",\"ib\":"<<ib<<",\"jr\":"<<jr<<",\"c\":"<<c<<",\"dt\":"<<dt<<",\"gamma\":"<<gamma<<",\"velocityIterations\":"<<h.GetNumVelocityStepsOverride()<<",\"positionIterations\":"<<h.GetNumPositionStepsOverride()<<",\"torqueLimit\":"<<limit<<"}\n";
  bool sawDrive=false,sawBrakeMotion=false,sawClamp=false;
  for(int i=0;i<100;i++){
-  float command=i<30?.015f:i<60?-.015f:0;if(reverse)command=-command;
+  float command=i<30?.015f:i<(limited?50:60)?-.015f:0;if(reverse)command=-command;
   Vec3 axis=a.GetRotation()*h.GetLocalSpaceHingeAxis1();
   float before=axis.Dot(b.GetAngularVelocity()-a.GetAngularVelocity());
   float theta=h.GetCurrentAngle(),target=theta+command/k;
