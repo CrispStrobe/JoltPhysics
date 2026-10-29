@@ -1,0 +1,54 @@
+--- a/Jolt/Physics/Constraints/HingeConstraint.h
++++ b/Jolt/Physics/Constraints/HingeConstraint.h
+@@ -149,6 +149,25 @@
+ 	inline Vector<2>			GetTotalLambdaRotation() const							{ return mRotationConstraintPart.GetTotalLambda(); }
+ 	inline float				GetTotalLambdaRotationLimits() const					{ return mRotationLimitsConstraintPart.GetTotalLambda(); }
+ 	inline float				GetTotalLambdaMotor() const								{ return mMotorConstraintPart.GetTotalLambda(); }
++	/// Read-only last SetupVelocityConstraint row cache; meaningful only in that
++	/// velocity-solve phase. Does not refresh poses, activate bodies or enter state.
++	struct MotorRowProperties
++	{
++		Vec3 mAxis;
++		float mInverseEffectiveMass;
++		float mSoftness;
++		float mBias;
++		bool mActive;
++	};
++	MotorRowProperties GetMotorRowProperties() const
++	{
++		if (!mMotorConstraintPart.IsActive())
++			return {Vec3::sZero(), 0.0f, 0.0f, 0.0f, false};
++		return {mA1, mMotorConstraintPart.GetInverseEffectiveMass(mA1),
++			mMotorConstraintPart.GetSoftness(), mMotorConstraintPart.GetBaseBias(), mMotorConstraintPart.IsActive()};
++	}
++
++
+ 
+ 	/// Configure outside Update. False for negative/non-finite values, leaving state unchanged.
+ 	/// Same value is idempotent. Enabling initializes scalar speed from the current hinge
+--- a/Jolt/Physics/Constraints/ConstraintPart/AngleConstraintPart.h
++++ b/Jolt/Physics/Constraints/ConstraintPart/AngleConstraintPart.h
+@@ -212,6 +212,11 @@
+ 		return ApplyVelocityStep(ioBody1, ioBody2, lambda);
+ 	}
+ 
++	/// Read-only cached row properties for the observational baseline probe.
++	float GetInverseEffectiveMass(Vec3Arg inAxis) const { return inAxis.Dot(mInvI1_Axis + mInvI2_Axis); }
++	float GetSoftness() const { return mSpringPart.GetSoftness(); }
++	float GetBaseBias() const { return mSpringPart.GetBias(0.0f); }
++
+ 	/// Return lagrange multiplier
+ 	float						GetTotalLambda() const
+ 	{
+--- a/Jolt/Physics/Constraints/ConstraintPart/SpringPart.h
++++ b/Jolt/Physics/Constraints/ConstraintPart/SpringPart.h
+@@ -177,6 +177,9 @@
+ 		return mSoftness * inTotalLambda + mBias;
+ 	}
+ 
++	/// Read-only cached softness for the observational baseline probe.
++	float GetSoftness() const { return mSoftness; }
++
+ private:
+ 	float						mBias  = 0.0f;
+ 	float						mSoftness  = 0.0f;

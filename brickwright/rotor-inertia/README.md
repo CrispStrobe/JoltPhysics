@@ -70,3 +70,64 @@ Post-pose geometric velocity residuals are reported separately and are not the
 velocity solver residual. Momentum, energy and position observations retain their
 actual post-update states. The original observer failure output remains evidence;
 this correction changes no solver, fixture command, iteration or threshold.
+
+## Coupled motor/rotor candidate
+
+`--motor-block-only` adds seven bounded 100-step controls: driven/reversing then
+zero-duty braking in both signs, an active motor impulse clamp, and both body orders for static and moving
+kinematic anchors. Kinematic anchors have prescribed 0.2 rad/s axial motion. Parameters
+come from the failed free-motor consumer's bare/reflected inertia ratio and DC
+slope: `dt=0.005`, 30 velocity / 5 position steps. Existing probe iterations and
+assertions are unchanged. A cached Jacobian axis is paired with after-solve
+velocities; post-integration poses do not define the velocity residual frame.
+The six unlimited cases use 30 positive-command steps, 30 negative-command
+steps, then 40 zero-duty steps (the reversed case reverses command signs).
+The limited case uses 30 positive, 20 negative, then 50 zero-duty steps. Its
+asymmetric schedule preserves motion into braking: equal opposite saturated
+impulses would cancel velocity before the brake phase and make the unchanged
+moving-brake nonvacuity assertion impossible. An independent synthetic reference
+identified that fixture flaw before the first native execution; the original
+symmetric source checkpoint is retained. All seven cases still require actual
+driven motion and actual moving-brake observations.
+
+Motor KKT and rotor residual bounds are `1e-4` rad/s. Zero-duty passivity is
+checked only when actual cached motor bias is zero, using `lambda_motor *
+omega_end`; its declared float budget is 32 machine epsilons times absolute
+motor impulse times `max(1, abs(omega_before), abs(omega_end))`. This is an
+impulse-work numerical budget, not a fitted endpoint allowance or a full-scene
+energy assertion. No-contact rows do not qualify contacts or all models.
+
+The workflow compiles the same probe against the candidate and afdb with the
+read-only `afdb-observer-only.patch`. The preparer verifies the exact afdb base,
+all present tracked bytes/modes, unchanged full-index blob/modes, explicitly
+unmaterialized sparse entries, and the three changed header hashes; no solve,
+state or equation is patched in that baseline. Baseline failure and candidate
+success are both required, alongside every previous native gate. The existing
+bw.7 zero-inertia baseline is retained separately. All first outputs remain in
+the artifact, including failures. A successful expanded artifact has the prior
+11 files plus `afdb-observer-source.json`, `motor-block-candidate.log`,
+`motor-block-afdb.log`, and `motor-block-status.json` (15 files total).
+
+Source preparation is not runtime qualification. The original failed consumer
+endpoint programmes and later built/packed bindings remain separate gates.
+
+### Preserved first block-qualification failure
+
+The first block candidate at `31c24b01dc6136a49db730e9d45627a0de482a32`
+failed overall. Body creation replaced the new fixture's declared small first
+inertia with its near-zero fallback (actual inverse inertia 25 instead of the
+declared reciprocal). The static-body2 moving-brake nonvacuity assertion
+correctly failed; no bound was changed. The intended inertia ratio was not
+qualified. Independently, source admission refused the observational baseline
+because its frozen `Build/CMakeLists.txt` input was not materialized; that
+reader refusal precedes physical acceptance and is retained separately.
+
+Only the new block fixtures now install the original declared inverse inertia
+on their dynamic bodies before constructing the hinge, then assert exact
+native inverse-inertia readback and unchanged inverse mass. This follows the
+consumer's explicit small-inertia admission rather than changing Jolt's body
+creation policy. The shared `BodyAt` helper, previous cases, unit tests, zero
+trajectory, solver equations, parameters, iteration counts and all guards are
+unchanged. The observational baseline checkout additionally materializes
+`Build`; its frozen reader and source requirements are unchanged. This is an
+unqualified source revision, not a retry or reinterpretation of the first run.

@@ -98,7 +98,7 @@ struct World{
   }
   s<<"],\"hinges\":[";
   for(size_t i=0;i<hinges.size();i++){
-   if(i)s<<',';auto &h=*hinges[i];s<<"{\"id\":"<<i<<",\"active\":"<<(h.IsActive()?"true":"false")<<",\"body1\":"<<Index(h.GetBody1())<<",\"body2\":"<<Index(h.GetBody2())<<",\"jr\":"<<Inertia(h)<<",\"wr\":"<<Speed(h)<<",\"rotorLambda\":"<<RotorLambda(h)<<",\"motorLambda\":"<<h.GetTotalLambdaMotor()<<",\"mode\":"<<int(h.GetMotorState())<<",\"targetVelocity\":"<<h.GetTargetAngularVelocity()<<",\"minTorque\":"<<h.GetMotorSettings().mMinTorqueLimit<<",\"maxTorque\":"<<h.GetMotorSettings().mMaxTorqueLimit<<",\"axis\":";
+   if(i)s<<',';auto &h=*hinges[i];s<<"{\"id\":"<<i<<",\"active\":"<<(h.IsActive()?"true":"false")<<",\"body1\":"<<Index(h.GetBody1())<<",\"body2\":"<<Index(h.GetBody2())<<",\"jr\":"<<Inertia(h)<<",\"wr\":"<<Speed(h)<<",\"rotorLambda\":"<<RotorLambda(h)<<",\"motorLambda\":"<<h.GetTotalLambdaMotor()<<",\"mode\":"<<int(h.GetMotorState())<<",\"velocityIterationsOverride\":"<<h.GetNumVelocityStepsOverride()<<",\"positionIterationsOverride\":"<<h.GetNumPositionStepsOverride()<<",\"targetVelocity\":"<<h.GetTargetAngularVelocity()<<",\"minTorque\":"<<h.GetMotorSettings().mMinTorqueLimit<<",\"maxTorque\":"<<h.GetMotorSettings().mMaxTorqueLimit<<",\"axis\":";
    VectorJSON(s,h.GetBody1()->GetRotation()*h.GetLocalSpaceHingeAxis1());s<<",\"localPoint1\":";VectorJSON(s,h.GetLocalSpacePoint1());s<<",\"localPoint2\":";VectorJSON(s,h.GetLocalSpacePoint2());s<<'}';
   }
   s<<"]}";
@@ -194,9 +194,73 @@ static void ZeroTrace(std::ostream &trace){
  h.GetMotorSettings().mMinTorqueLimit=-.2f;h.GetMotorSettings().mMaxTorqueLimit=.2f;h.SetMotorState(EMotorState::Velocity);h.SetTargetAngularVelocity(2);
  trace<<std::hexfloat;for(int i=0;i<100;i++){w.Step();for(auto p:{&a,&b}){auto v=p->GetLinearVelocity(),av=p->GetAngularVelocity();auto q=p->GetRotation();auto x=p->GetPosition();trace<<i<<','<<x.GetX()<<','<<x.GetY()<<','<<x.GetZ()<<','<<q.GetX()<<','<<q.GetY()<<','<<q.GetZ()<<','<<q.GetW()<<','<<v.GetX()<<','<<v.GetY()<<','<<v.GetZ()<<','<<av.GetX()<<','<<av.GetY()<<','<<av.GetZ()<<'\n';}}
 }
+// High reflected/bare inertia ratio from the failed free-motor consumer.
+// Fixed commands, no programme timing, encoder reset, contact, or fitted endpoints.
+static void MotorBlockControl(bool limited, bool reverse, EMotionType anchor=EMotionType::Dynamic, bool anchorSecond=false){
+#ifndef BW_ROTOR_BASELINE
+ constexpr float ia=2.3871996117945184e-7f,ib=7.750766826354666e-6f,jr=.0004529942571492882f;
+ constexpr float dt=.005f,c=.007881959086455769f;
+ const float k=c/(2*dt),gamma=1/(dt*c),limit=limited?.001f:1e6f;
+ const char *label=anchor==EMotionType::Static?(anchorSecond?"motor-block-static-body2":"motor-block-static-body1"):
+  anchor==EMotionType::Kinematic?(anchorSecond?"motor-block-kinematic-body2":"motor-block-kinematic-body1"):
+  limited?"motor-block-clamped":reverse?"motor-block-reversed":"motor-block-brake";
+ World w(label);
+ Body &a=w.BodyAt(RVec3::sZero(),Vec3::sReplicate(ia),anchorSecond?EMotionType::Dynamic:anchor),
+  &b=w.BodyAt(RVec3::sZero(),Vec3::sReplicate(ib),anchorSecond?anchor:EMotionType::Dynamic);
+ if(anchor==EMotionType::Kinematic)w.system.GetBodyInterface().SetAngularVelocity((anchorSecond?b:a).GetID(),.2f*Vec3::sAxisY());
+ // These NEW controls must admit their declared small tensor, as the consumer
+ // does. Body creation's near-zero fallback is not the requested test inertia.
+ for(auto body:{&a,&b})if(body->IsDynamic()){
+  auto *motion=body->GetMotionProperties();float inverseMass=motion->GetInverseMass();
+  float declared=body==&a?ia:ib;Vec3 inverse=Vec3::sReplicate(1.0f/declared);
+  motion->SetInverseInertia(inverse,Quat::sIdentity());
+  Check(motion->GetInverseMass()==inverseMass,"new block fixture inertia admission preserves mass");
+  Check(motion->GetInverseInertiaDiagonal()==inverse&&motion->GetInertiaRotation()==Quat::sIdentity(),"new block fixture actual inverse inertia equals declaration");
+ }
+ auto &h=w.Hinge(a,b,RVec3::sZero(),Vec3::sAxisY(),jr);
+ h.SetNumVelocityStepsOverride(30);h.SetNumPositionStepsOverride(5);
+ auto &ms=h.GetMotorSettings();ms.mMinTorqueLimit=-limit;ms.mMaxTorqueLimit=limit;
+ ms.mSpringSettings.mMode=ESpringMode::StiffnessAndDamping;ms.mSpringSettings.mStiffness=k;ms.mSpringSettings.mDamping=c/2;
+ h.SetMotorState(EMotorState::Position);
+ std::cout<<"MOTOR_BLOCK_CONFIG {\"case\":\""<<w.label<<"\",\"ia\":"<<ia<<",\"ib\":"<<ib<<",\"jr\":"<<jr<<",\"c\":"<<c<<",\"dt\":"<<dt<<",\"gamma\":"<<gamma<<",\"velocityIterations\":"<<h.GetNumVelocityStepsOverride()<<",\"positionIterations\":"<<h.GetNumPositionStepsOverride()<<",\"torqueLimit\":"<<limit<<"}\n";
+ bool sawDrive=false,sawBrakeMotion=false,sawClamp=false;
+ for(int i=0;i<100;i++){
+  float command=i<30?.015f:i<(limited?50:60)?-.015f:0;if(reverse)command=-command;
+  Vec3 axis=a.GetRotation()*h.GetLocalSpaceHingeAxis1();
+  float before=axis.Dot(b.GetAngularVelocity()-a.GetAngularVelocity());
+  float theta=h.GetCurrentAngle(),target=theta+command/k;
+  h.SetTargetAngle(target);
+  float actualTarget=h.GetTargetAngle();float error=std::atan2(std::sin(theta-actualTarget),std::cos(theta-actualTarget));
+  float oldWr=Speed(h),oldMotorLambda=h.GetTotalLambdaMotor(),oldRotorLambda=RotorLambda(h);
+  w.Step(dt);
+  auto row=h.GetMotorRowProperties();
+  Check(row.mActive,"block motor row remains active");
+  // Cached SetupVelocityConstraint axis paired with AFTER velocities, never post-pose axes.
+  float velocity=row.mAxis.Dot(b.GetAngularVelocity()-a.GetAngularVelocity()),lambda=h.GetTotalLambdaMotor();
+  float residual=velocity+row.mSoftness*lambda+row.mBias,rotorResidual=velocity-Speed(h);
+  float bound=dt*limit;
+  bool lower=lambda<=-bound,upper=lambda>=bound;
+  // An active upper bound admits a negative unconstrained equation residual.
+  bool rowOK=lower?residual>=-1e-4f:upper?residual<=1e-4f:std::abs(residual)<=1e-4f;
+  Check(rowOK,"coupled soft motor equation or active clamp");
+  Check(std::abs(rotorResidual)<=1e-4f,"coupled rotor equation");
+  Check(std::abs(lambda)<=bound,"motor total impulse clamp unchanged");
+  float work=lambda*velocity;
+  float roundoff=32*std::numeric_limits<float>::epsilon()*std::abs(lambda)*std::max(1.0f,std::max(std::abs(before),std::abs(velocity)));
+  if(command==0){Check(row.mBias==0,"zero duty brake actual cached bias is zero");Check(work<=roundoff,"zero duty brake does not inject impulse work");if(std::abs(before)>.01f)sawBrakeMotion=true;}
+  if(command!=0&&std::abs(velocity)>.01f)sawDrive=true;
+  if(limited&&(lower||upper))sawClamp=true;
+  std::cout<<"MOTOR_BLOCK_STEP {\"case\":\""<<w.label<<"\",\"index\":"<<i<<",\"dt\":"<<dt<<",\"commandTorqueNm\":"<<command<<",\"thetaBefore\":"<<theta<<",\"targetAngle\":"<<actualTarget<<",\"positionError\":"<<error<<",\"bias\":"<<row.mBias<<",\"gamma\":"<<row.mSoftness<<",\"axisBefore\":";VectorJSON(std::cout,row.mAxis);
+  std::cout<<",\"cachedInverseEffectiveMass\":"<<row.mInverseEffectiveMass<<",\"rowActive\":"<<(row.mActive?"true":"false")<<",\"motorLambdaBefore\":"<<oldMotorLambda<<",\"rotorLambdaBefore\":"<<oldRotorLambda;
+  std::cout<<",\"omegaBefore\":"<<before<<",\"omegaAfter\":"<<velocity<<",\"wrBefore\":"<<oldWr<<",\"wrAfter\":"<<Speed(h)<<",\"motorLambda\":"<<lambda<<",\"rotorLambda\":"<<RotorLambda(h)<<",\"motorResidual\":"<<residual<<",\"rotorResidual\":"<<rotorResidual<<",\"motorWorkJ\":"<<work<<",\"workRoundoffJ\":"<<roundoff<<",\"impulseBound\":"<<bound<<"}\n";
+ }
+ Check(sawDrive&&sawBrakeMotion,"block control has driven and moving brake observations");
+ if(limited)Check(sawClamp,"limited block actually reaches clamp");
+#endif
+}
 int main(int argc,char **argv){
- bool zeroOnly=false;std::string tracePath;for(int i=1;i<argc;i++){std::string a=argv[i];if(a=="--zero-only")zeroOnly=true;else if(a=="--disable-rotor-control")mutation=true;else if(a=="--trace"&&i+1<argc)tracePath=argv[++i];else return 2;}
+ bool blockOnly=false;bool zeroOnly=false;std::string tracePath;for(int i=1;i<argc;i++){std::string a=argv[i];if(a=="--motor-block-only")blockOnly=true;else if(a=="--zero-only")zeroOnly=true;else if(a=="--disable-rotor-control")mutation=true;else if(a=="--trace"&&i+1<argc)tracePath=argv[++i];else return 2;}
  std::cout<<std::setprecision(9);std::cout<<"ROTOR_META {\"schema\":\"bw.native-rotor.trace.v1\",\"nativeSource\":\""<<BW_NATIVE_SOURCE_SHA<<"\",\"probeSource\":\""<<BW_PROBE_SOURCE_SHA<<"\",\"disableRotorControl\":"<<(mutation?"true":"false")<<"}\n";RegisterDefaultAllocator();Factory::sInstance=new Factory();RegisterTypes();
- if(zeroOnly){std::ofstream trace(tracePath);Check(bool(trace),"zero control trace opened");ZeroTrace(trace);}else{Analytic(.003f);Analytic(-.003f);Clamped();ConstraintControls(0);ConstraintControls(.0003f);SharedAndConfiguration();}
+ if(blockOnly){MotorBlockControl(false,false);MotorBlockControl(false,true);MotorBlockControl(true,false);for(auto anchor:{EMotionType::Static,EMotionType::Kinematic})for(bool second:{false,true})MotorBlockControl(false,false,anchor,second);}else if(zeroOnly){std::ofstream trace(tracePath);Check(bool(trace),"zero control trace opened");ZeroTrace(trace);}else{Analytic(.003f);Analytic(-.003f);Clamped();ConstraintControls(0);ConstraintControls(.0003f);SharedAndConfiguration();}
  UnregisterTypes();delete Factory::sInstance;Factory::sInstance=nullptr;std::cout<<"{\"checks\":"<<checks<<",\"failures\":"<<failures<<"}\n";return failures?1:0;
 }

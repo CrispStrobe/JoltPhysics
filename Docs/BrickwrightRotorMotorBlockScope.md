@@ -1,6 +1,6 @@
 # Coupled hinge motor and reflected rotor scope
 
-Status: CLAIM ONLY; implementation and qualification pending.
+Status: SOURCE CANDIDATE; native and consumer qualification pending.
 Owner: Codex, continuing the user-authorized Robot Lab physics work.
 Base: `3663a39020866aae3b4a5311305fffdaa30ffb1e` on
 `brickwright/gear-mesh-master` in the owned Jolt Physics fork.
@@ -52,3 +52,27 @@ and packed scalar/SIMD binding package before advancing Lite's exact package
 pin through its owning lane. Original hub endpoints, promoted programmes and
 rendered worker/save-reopen paths must pass on that combined consumer. This
 scope makes no hardware accuracy, application release or deployment claim.
+
+## Candidate implementation boundary
+
+The positive-inertia active-motor path solves the motor and rotor as a two-row
+block, retaining the existing motor impulse bounds. A stable Schur complement
+avoids subtracting nearly equal bare mobilities. Both solve and warmstart apply
+the summed body impulse once; the motor and rotor keep their distinct native
+accumulated impulses and scalar coordinate. No new checkpoint field is added.
+The zero-inertia path retains the existing standalone motor solve.
+
+Read-only row properties expose the last setup cache for bounded qualification;
+they do not refresh a pose or change a constraint. The paired previous-engine
+control is explicitly `afdb16ddd4f4d5f2ad16cc8814abe0c80114464e` plus a retained
+three-header, read-only observer patch. It is not labeled pristine afdb bytes.
+The patch receipt hashes both header versions and verifies every other present tracked
+file and mode and the full Git index are unchanged; omitted sparse entries
+are explicitly recorded by index blob/mode, without claiming their bytes were read. The older zero-inertia engine baseline is separate.
+
+The new control records known commands, actual cached softness/bias/axis/bare
+mobility, body velocities and both impulses. It judges motor clamp KKT signs,
+rotor equality and zero-bias brake impulse work at unchanged iteration counts.
+All existing probe checks and zero-trajectory comparison remain gates. This
+source has not been compiled or executed at this checkpoint; neither native
+repair nor application endpoint acceptance is claimed.

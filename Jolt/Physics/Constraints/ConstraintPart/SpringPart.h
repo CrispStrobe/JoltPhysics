@@ -177,6 +177,9 @@ public:
 		return mSoftness * inTotalLambda + mBias;
 	}
 
+	/// Cached impulse softness for a coupled constraint row.
+	float GetSoftness() const { return mSoftness; }
+
 private:
 	float						mBias  = 0.0f;
 	float						mSoftness  = 0.0f;

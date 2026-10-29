@@ -4,6 +4,8 @@ on:
     paths:
       - 'Jolt/Physics/Constraints/HingeConstraint.*'
       - 'Jolt/Physics/Constraints/ConstraintPart/RotationalInertiaConstraintPart.h'
+      - 'Jolt/Physics/Constraints/ConstraintPart/AngleConstraintPart.h'
+      - 'Jolt/Physics/Constraints/ConstraintPart/SpringPart.h'
       - 'UnitTests/Physics/HingeConstraintTests.cpp'
       - 'brickwright/rotor-inertia/**'
       - '.github/workflows/relative-rotor.yml'
@@ -22,20 +24,32 @@ jobs:
             Jolt
             UnitTests
             brickwright/rotor-inertia
+            .github/workflows
       - uses: actions/checkout@v4
         with:
           ref: 389854fb7912d814112ce46b5a3cda63490e70b3
           path: baseline
           sparse-checkout: Jolt
+      - uses: actions/checkout@v4
+        with:
+          ref: afdb16ddd4f4d5f2ad16cc8814abe0c80114464e
+          path: motor-baseline
+          sparse-checkout: |
+            Jolt
+            UnitTests
+            Build
+      - name: Prepare read-only afdb observer baseline
+        run: python3 producer/brickwright/rotor-inertia/prepare-afdb-observer.py motor-baseline producer/brickwright/rotor-inertia/afdb-observer-only.patch afdb-observer-source.json
       - name: Bind actual checkout and runtime metadata
         shell: bash
         run: |
           mkdir evidence
+          cp afdb-observer-source.json evidence/afdb-observer-source.json
           python3 - <<'PY'
           import hashlib,json,os,pathlib,platform,subprocess
           def git(root,*args):return subprocess.check_output(['git','-C',root,*args],text=True).strip()
-          paths=['Jolt/Physics/Constraints/HingeConstraint.h','Jolt/Physics/Constraints/HingeConstraint.cpp','Jolt/Physics/Constraints/ConstraintPart/RotationalInertiaConstraintPart.h','brickwright/rotor-inertia/probe.cpp']
-          manifest={'producer':git('producer','rev-parse','HEAD'),'producerTree':git('producer','rev-parse','HEAD^{tree}'),'baseline':git('baseline','rev-parse','HEAD'),'baselineTree':git('baseline','rev-parse','HEAD^{tree}'),'eventHead':os.environ['GITHUB_SHA'],'python':platform.python_version(),'machine':platform.machine(),'inputs':{p:hashlib.sha256((pathlib.Path('producer')/p).read_bytes()).hexdigest() for p in paths}}
+          paths=['Jolt/Physics/Constraints/HingeConstraint.h','Jolt/Physics/Constraints/HingeConstraint.cpp','Jolt/Physics/Constraints/ConstraintPart/RotationalInertiaConstraintPart.h','brickwright/rotor-inertia/probe.cpp','Jolt/Physics/Constraints/ConstraintPart/AngleConstraintPart.h','Jolt/Physics/Constraints/ConstraintPart/SpringPart.h','brickwright/rotor-inertia/afdb-observer-only.patch','brickwright/rotor-inertia/prepare-afdb-observer.py','brickwright/rotor-inertia/CMakeLists.txt','UnitTests/Physics/HingeConstraintTests.cpp','.github/workflows/relative-rotor.yml']
+          manifest={'producer':git('producer','rev-parse','HEAD'),'producerTree':git('producer','rev-parse','HEAD^{tree}'),'baseline':git('baseline','rev-parse','HEAD'),'baselineTree':git('baseline','rev-parse','HEAD^{tree}'),'motorBaseline':git('motor-baseline','rev-parse','HEAD'),'motorBaselineTree':git('motor-baseline','rev-parse','HEAD^{tree}'),'eventHead':os.environ['GITHUB_SHA'],'python':platform.python_version(),'machine':platform.machine(),'inputs':{p:hashlib.sha256((pathlib.Path('producer')/p).read_bytes()).hexdigest() for p in paths}}
           pathlib.Path('evidence/source-runtime.json').write_text(json.dumps(manifest,indent=2)+'\n')
           PY
           c++ --version > evidence/compiler.txt
@@ -48,9 +62,12 @@ jobs:
           cmake --build fixed --parallel 2
           cmake -S producer/brickwright/rotor-inertia -B old -DCMAKE_BUILD_TYPE=Release -DBW_PHYSICS_ROOT="$GITHUB_WORKSPACE/baseline" -DBW_ROTOR_BASELINE=ON -DBW_NATIVE_SOURCE_SHA="$baseline_sha" -DBW_PROBE_SOURCE_SHA="$producer_sha"
           cmake --build old --parallel 2
+          motor_baseline_sha=$(git -C motor-baseline rev-parse HEAD)
+          cmake -S producer/brickwright/rotor-inertia -B motor-old -DCMAKE_BUILD_TYPE=Release -DBW_PHYSICS_ROOT="$GITHUB_WORKSPACE/motor-baseline" -DBW_NATIVE_SOURCE_SHA="$motor_baseline_sha" -DBW_PROBE_SOURCE_SHA="$producer_sha"
+          cmake --build motor-old --parallel 2
           python3 - <<'PY'
           import hashlib,json,pathlib
-          paths=['fixed/rotor-inertia-probe','fixed/rotor-hinge-unit-tests','old/rotor-inertia-probe']
+          paths=['fixed/rotor-inertia-probe','fixed/rotor-hinge-unit-tests','old/rotor-inertia-probe','motor-old/rotor-inertia-probe']
           pathlib.Path('evidence/binary-sha256.json').write_text(json.dumps({p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in paths},indent=2)+'\n')
           PY
       - name: Preserve all native outcomes and causal zero controls
@@ -69,12 +86,21 @@ jobs:
           zero_baseline=$?
           cmp evidence/zero-candidate.csv evidence/zero-baseline.csv
           zero_equal=$?
-          python3 - "$candidate" "$units" "$disabled" "$zero_candidate" "$zero_baseline" "$zero_equal" <<'PY'
+          fixed/rotor-inertia-probe --motor-block-only > evidence/motor-block-candidate.log 2>&1
+          block_candidate=$?
+          motor-old/rotor-inertia-probe --motor-block-only > evidence/motor-block-afdb.log 2>&1
+          block_baseline=$?
+          python3 - "$block_candidate" "$block_baseline" <<'PY'
           import json,pathlib,sys
-          names=['candidate','hingeUnits','disabledRow','zeroCandidate','zeroBaseline','zeroTraceComparison']
+          result=dict(zip(['candidate','afdbBaseline'],map(int,sys.argv[1:])))
+          pathlib.Path('evidence/motor-block-status.json').write_text(json.dumps(result,indent=2)+'\n')
+          PY
+          python3 - "$candidate" "$units" "$disabled" "$zero_candidate" "$zero_baseline" "$zero_equal" "$block_candidate" "$block_baseline" <<'PY'
+          import json,pathlib,sys
+          names=['candidate','hingeUnits','disabledRow','zeroCandidate','zeroBaseline','zeroTraceComparison','motorBlockCandidate','motorBlockBaseline']
           result=dict(zip(names,map(int,sys.argv[1:])))
           pathlib.Path('evidence/status.json').write_text(json.dumps(result,indent=2)+'\n')
-          sys.exit(0 if all(result[k]==0 for k in names if k!='disabledRow') and result['disabledRow']==1 else 1)
+          sys.exit(0 if all(result[k]==0 for k in names if k not in ('disabledRow','motorBlockBaseline')) and result['disabledRow']==1 and result['motorBlockBaseline']==1 else 1)
           PY
       - name: Retain bounded evidence including failures
         if: always()
