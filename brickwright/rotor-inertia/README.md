@@ -110,3 +110,24 @@ the artifact, including failures. A successful expanded artifact has the prior
 
 Source preparation is not runtime qualification. The original failed consumer
 endpoint programmes and later built/packed bindings remain separate gates.
+
+### Preserved first block-qualification failure
+
+The first block candidate at `31c24b01dc6136a49db730e9d45627a0de482a32`
+failed overall. Body creation replaced the new fixture's declared small first
+inertia with its near-zero fallback (actual inverse inertia 25 instead of the
+declared reciprocal). The static-body2 moving-brake nonvacuity assertion
+correctly failed; no bound was changed. The intended inertia ratio was not
+qualified. Independently, source admission refused the observational baseline
+because its frozen `Build/CMakeLists.txt` input was not materialized; that
+reader refusal precedes physical acceptance and is retained separately.
+
+Only the new block fixtures now install the original declared inverse inertia
+on their dynamic bodies before constructing the hinge, then assert exact
+native inverse-inertia readback and unchanged inverse mass. This follows the
+consumer's explicit small-inertia admission rather than changing Jolt's body
+creation policy. The shared `BodyAt` helper, previous cases, unit tests, zero
+trajectory, solver equations, parameters, iteration counts and all guards are
+unchanged. The observational baseline checkout additionally materializes
+`Build`; its frozen reader and source requirements are unchanged. This is an
+unqualified source revision, not a retry or reinterpretation of the first run.

@@ -208,6 +208,15 @@ static void MotorBlockControl(bool limited, bool reverse, EMotionType anchor=EMo
  Body &a=w.BodyAt(RVec3::sZero(),Vec3::sReplicate(ia),anchorSecond?EMotionType::Dynamic:anchor),
   &b=w.BodyAt(RVec3::sZero(),Vec3::sReplicate(ib),anchorSecond?anchor:EMotionType::Dynamic);
  if(anchor==EMotionType::Kinematic)w.system.GetBodyInterface().SetAngularVelocity((anchorSecond?b:a).GetID(),.2f*Vec3::sAxisY());
+ // These NEW controls must admit their declared small tensor, as the consumer
+ // does. Body creation's near-zero fallback is not the requested test inertia.
+ for(auto body:{&a,&b})if(body->IsDynamic()){
+  auto *motion=body->GetMotionProperties();float inverseMass=motion->GetInverseMass();
+  float declared=body==&a?ia:ib;Vec3 inverse=Vec3::sReplicate(1.0f/declared);
+  motion->SetInverseInertia(inverse,Quat::sIdentity());
+  Check(motion->GetInverseMass()==inverseMass,"new block fixture inertia admission preserves mass");
+  Check(motion->GetInverseInertiaDiagonal()==inverse&&motion->GetInertiaRotation()==Quat::sIdentity(),"new block fixture actual inverse inertia equals declaration");
+ }
  auto &h=w.Hinge(a,b,RVec3::sZero(),Vec3::sAxisY(),jr);
  h.SetNumVelocityStepsOverride(30);h.SetNumPositionStepsOverride(5);
  auto &ms=h.GetMotorSettings();ms.mMinTorqueLimit=-limit;ms.mMaxTorqueLimit=limit;

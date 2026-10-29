@@ -37,6 +37,7 @@ jobs:
           sparse-checkout: |
             Jolt
             UnitTests
+            Build
       - name: Prepare read-only afdb observer baseline
         run: python3 producer/brickwright/rotor-inertia/prepare-afdb-observer.py motor-baseline producer/brickwright/rotor-inertia/afdb-observer-only.patch afdb-observer-source.json
       - name: Bind actual checkout and runtime metadata
