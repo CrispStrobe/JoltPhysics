@@ -203,10 +203,30 @@ A native build works as upstream (`cd Build && ./cmake_linux_clang_gcc.sh`). The
 after `Pulley`, shifting `User1..4` by one (nothing in Jolt or JoltPhysics.js depends on their numeric values).
 
 
-### Coupled rotor/motor source candidate
+### Coupled rotor/motor: bounded native qualification complete
 
-The scoped two-row motor/rotor candidate and paired read-only afdb observer
-control are prepared under `Docs/BrickwrightRotorMotorBlockScope.md`.
-Compilation, native qualification, binding packages and affected consumer
-endpoints remain pending. No new pin, release, or all-model acceptance follows
-from this source checkpoint.
+[Native PR 6](https://github.com/CrispStrobe/JoltPhysics/pull/6) is qualified and
+normally merged at
+[`0ff27c94898c910cb024b4e74218818358ee4852`](https://github.com/CrispStrobe/JoltPhysics/commit/0ff27c94898c910cb024b4e74218818358ee4852).
+All three enabled checks succeeded. The retained
+[hosted native run](https://github.com/CrispStrobe/JoltPhysics/actions/runs/40812084515)
+passed 819 existing probe checks, five hinge unit cases with 743 assertions,
+and 4,115 new block checks. Independent analysis accepted all 700 block steps;
+the previous-engine observer control exposed 619 violations under the same
+judge. The zero-inertia trajectories remain byte-identical across 200 rows.
+
+The original `31c24b0` fixture failure and source-admission refusal remain failures:
+the requested small inertia initially triggered body creation's fallback, and a
+required baseline build input was initially unmaterialized. The subsequent
+initial `7fbfacb` observation refusal is also retained. A separately reviewed observer
+reproduced the pinned SSE2 binary32 tensor operation sequence exactly instead
+of comparing its cancellation terms with an ideal double-precision isotropic
+matrix. This strengthened the observation validator without adding a tolerance
+or changing any numerical physics budget. No engine producer was replayed to
+reinterpret those retained bytes.
+
+See `Docs/BrickwrightRotorMotorBlockScope.md` for the bounded implementation
+and qualification boundary. WebAssembly bw.9 built/packed package results,
+affected consumer endpoints and rendered worker/save-reopen paths remain
+pending. This is not an all-model, hardware, all-lifetime accuracy, package
+release or application deployment claim. The overall physics work remains open.
