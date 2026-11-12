@@ -7,6 +7,7 @@
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Core/Mutex.h>
 #include <Jolt/Core/MutexArray.h>
+#include <Jolt/Core/UnorderedMap.h>
 
 JPH_NAMESPACE_BEGIN
 
@@ -313,6 +314,20 @@ public:
 #endif
 
 private:
+	friend class PhysicsSystem;
+	// Configuration guard spans cache invalidation and PhysicsSystem callback/mode transitions.
+	bool SetSimInternalEdgeRemovalPairLocked(const BodyID &inShape1, const BodyID &inShape2, bool inEnable);
+	void ClearSimInternalEdgeRemovalPairsLocked();
+	BodyID GetSimInternalEdgeRemovalShape2(const BodyID &inBody1, const BodyID &inBody2) const;
+	void SetSimInternalEdgeUpdateActive(bool inActive) { mSimInternalEdgeUpdateActive.store(inActive, memory_order_release); }
+	void UnlockSimInternalEdgePairs();
+	static uint64					sSimInternalEdgePairKey(const BodyID &inA, const BodyID &inB)
+	{
+		uint32 a = inA.GetIndexAndSequenceNumber(), b = inB.GetIndexAndSequenceNumber();
+		return a < b? (uint64(a) << 32) | b : (uint64(b) << 32) | a;
+	}
+	bool							TryLockSimInternalEdgePairs();
+
 	/// Increment and get the sequence number of the body
 #ifdef JPH_COMPILER_CLANG
 	__attribute__((no_sanitize("implicit-conversion"))) // We intentionally overflow the uint8 sequence number
@@ -378,6 +393,12 @@ private:
 
 	/// Mutex that protects the mBodiesCacheInvalid array
 	mutable Mutex					mBodiesCacheInvalidMutex;
+
+	/// Exact complete-ID key; value is the requested surface (shape 2), not sorted order.
+	/// Protected by mBodiesMutex. Update owns that lock across its worker jobs.
+	UnorderedMap<uint64, BodyID>	mSimInternalEdgePairs;
+	atomic<bool>					mSimInternalEdgeUpdateActive { false };
+	atomic<bool>					mSimInternalEdgeConfigurationActive { false };
 
 	/// List of all bodies that should have their cache invalidated
 	BodyIDVector					mBodiesCacheInvalid;
