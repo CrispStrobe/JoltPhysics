@@ -101,8 +101,25 @@ public:
 
 	/// Advanced use only: Set the function that will be used to collide two bodies during simulation.
 	/// This function is expected to eventually call CollideShapeCollector::AddHit all contact points between the shapes of body 1 and 2 in their given transforms.
-	void						SetSimCollideBodyVsBody(const SimCollideBodyVsBody &inBodyVsBody) { mSimCollideBodyVsBody = inBodyVsBody; }
+	void						SetSimCollideBodyVsBody(const SimCollideBodyVsBody &inBodyVsBody);
 	const SimCollideBodyVsBody &GetSimCollideBodyVsBody() const								{ return mSimCollideBodyVsBody; }
+
+	/// Opt in exactly this unordered live rigid-body pair to enhanced internal-edge removal,
+	/// with inShape1 as source and inShape2 as polygon surface. Does not change body flags.
+	/// False removes the override in either argument order, restoring the existing callback/flags.
+	/// Default: no overrides. False return means invalid/stale/same IDs, soft body/sensor,
+	/// custom callback mode, contention, or mutation during Update (including its callbacks).
+	/// Configure only at externally serialized idle-world points, never concurrently with
+	/// Update or other body/configuration operations and never from body/physics callbacks.
+	/// IDs are scoped to this system. Changes invalidate both caches without waking bodies.
+	/// Destroy/unassign automatically removes affected overrides before any ID reuse.
+	/// Configuration is not serialized; keep it unchanged across SaveState/RestoreState,
+	/// just like the simulation shape filter and custom collision callback.
+	bool						SetSimInternalEdgeRemovalPair(const BodyID &inShape1, const BodyID &inShape2, bool inEnable);
+	bool						ClearSimInternalEdgeRemovalPairs();
+	/// Explicitly restore the default collide callback and clear overrides. Pair enable is
+	/// refused after SetSimCollideBodyVsBody until this succeeds; never replaces a callback silently.
+	bool						ResetSimCollideBodyVsBody();
 
 	/// Advanced use only: Default function that is used to collide two bodies during simulation.
 	static void					sDefaultSimCollideBodyVsBody(const Body &inBody1, const Body &inBody2, Mat44Arg inCenterOfMassTransform1, Mat44Arg inCenterOfMassTransform2, CollideShapeSettings &ioCollideShapeSettings, CollideShapeCollector &ioCollector, const ShapeFilter &inShapeFilter);
@@ -362,6 +379,9 @@ private:
 
 	/// The shape filter that is used to filter out sub shapes during simulation
 	const SimShapeFilter *		mSimShapeFilter = nullptr;
+
+	void						CollideSimBodyPair(const Body &inBody1, const Body &inBody2, Mat44Arg inTransform1, Mat44Arg inTransform2, CollideShapeSettings &ioSettings, CollideShapeCollector &ioCollector, const ShapeFilter &inFilter);
+	bool						mSimInternalEdgePairsAllowed = true;
 
 	/// The collision function that is used to collide two shapes during simulation
 	SimCollideBodyVsBody		mSimCollideBodyVsBody = &sDefaultSimCollideBodyVsBody;
