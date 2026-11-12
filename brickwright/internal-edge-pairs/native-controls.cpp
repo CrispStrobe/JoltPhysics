@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -114,9 +115,29 @@ static void replayControls(){
  recorder.Rewind();need(w.system.RestoreState(recorder),"same-config restore");for(int i=0;i<12;i++){w.step();second.push_back(float(w.roller->GetPosition().GetY()));}
  need(first.size()==second.size()&&std::memcmp(first.data(),second.data(),first.size()*sizeof(float))==0,"unchanged policy replay trajectory bytes");need(w.select(false),"replay policy remains present");need(w.invalid(),"restored session retained policy configuration");
 }
+static void ownerTeardownControls(){
+ struct State{PhysicsSystem *system=nullptr;BodyID source,surface;bool armed=false,entered=false,set=true,clear=true,reset=true;uint bodies=0;};
+ struct Functor{std::shared_ptr<State> state;
+  void operator()(const Body&a,const Body&b,Mat44Arg t1,Mat44Arg t2,CollideShapeSettings&s,CollideShapeCollector&c,const ShapeFilter&f)const{PhysicsSystem::sDefaultSimCollideBodyVsBody(a,b,t1,t2,s,c,f);}
+  ~Functor(){if(state&&state->armed){auto held=state;held->armed=false;held->entered=true;held->bodies=held->system->GetNumBodies();held->set=held->system->SetSimInternalEdgeRemovalPair(held->source,held->surface,false);held->clear=held->system->ClearSimInternalEdgeRemovalPairs();held->reset=held->system->ResetSimCollideBodyVsBody();}}
+ };
+ for(bool teardown:{false,true}){
+  std::cerr<<"CASE owner-functor "<<teardown<<'\n';auto state=std::make_shared<State>();
+  {BP bp;OP op;OV ov;PhysicsSystem system;system.Init(16,0,16,16,bp,ov,op);state->system=&system;
+   auto &bi=system.GetBodyInterface();BodyCreationSettings settings(new SphereShape(.01f),RVec3::sZero(),Quat::sIdentity(),EMotionType::Dynamic,0);
+   Body *a=bi.CreateBody(settings),*b=bi.CreateBody(settings);need(a&&b,"teardown live body allocation");state->source=a->GetID();state->surface=b->GetID();bi.AddBody(state->source,EActivation::Activate);bi.AddBody(state->surface,EActivation::Activate);
+   system.SetSimCollideBodyVsBody(Functor{state});state->armed=true;
+   if(!teardown)need(system.ResetSimCollideBodyVsBody(),"idle explicit callback reset");
+   // The owner retains both bodies. Its BodyManager destroys them after the
+   // collide functor, making Set(false) a nonvacuous live-ID reentry control.
+  }
+  need(state->entered&&state->bodies==2,"functor invoked while both owned bodies remain live");
+  need(state->set==!teardown&&state->clear==!teardown&&state->reset==!teardown,"only owner teardown refuses configuration; idle functor cleanup remains allowed");
+ }
+}
 int main(){try{RegisterDefaultAllocator();Factory::sInstance=new Factory;RegisterTypes();
 #ifdef JPH_ENABLE_ASSERTS
  AssertFailed=assertion;
 #endif
- filterControls();cacheControls();lifetimeControls();callbackControls();replayControls();{World fresh(true,1);fresh.steps(2);need(fresh.select(false)&&!fresh.invalid(),"new world default off");}
+ filterControls();cacheControls();lifetimeControls();callbackControls();replayControls();ownerTeardownControls();{World fresh(true,1);fresh.steps(2);need(fresh.select(false)&&!fresh.invalid(),"new world default off");}
  UnregisterTypes();delete Factory::sInstance;Factory::sInstance=nullptr;std::cout<<"PASS "<<checks<<" real native checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}

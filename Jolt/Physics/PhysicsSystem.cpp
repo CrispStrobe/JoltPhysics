@@ -75,6 +75,10 @@ static const Color cColorSoftBodyFinalize = Color::sGetDistinctColor(23);
 
 PhysicsSystem::~PhysicsSystem()
 {
+	// User collide functors are destroyed after this destructor body. Refuse
+	// their configuration reentry before any subsystem or callback is torn down.
+	mBodyManager.SetSimInternalEdgeUpdateActive(true);
+
 	// Remove broadphase
 	delete mBroadPhase;
 }

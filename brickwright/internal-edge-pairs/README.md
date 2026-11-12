@@ -20,6 +20,11 @@ and clears selections; enabling a pair never silently replaces a callback.
 Callback replacement and pair/cache changes share the existing body-list lock;
 user functor destruction occurs after releasing it.
 
+Owner destruction blocks configuration before removing subsystems or destroying
+the collide functor. Its destructor therefore cannot reconfigure the callback
+being destroyed. Ordinary idle callback replacement still permits cleanup after
+unlock. This does not make a pointer usable after its PhysicsSystem is destroyed.
+
 Selections are session configuration, like the simulation shape filter and
 custom collision callback. They are not included in SaveState. Save/restore is
 supported only with unchanged configuration and body identity. Applications must

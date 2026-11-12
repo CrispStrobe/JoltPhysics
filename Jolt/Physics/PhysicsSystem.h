@@ -108,7 +108,7 @@ public:
 	/// with inShape1 as source and inShape2 as polygon surface. Does not change body flags.
 	/// False removes the override in either argument order, restoring the existing callback/flags.
 	/// Default: no overrides. False return means invalid/stale/same IDs, soft body/sensor,
-	/// custom callback mode, contention, or mutation during Update (including its callbacks).
+	/// custom callback mode, contention, or mutation during Update/owner teardown (including callbacks).
 	/// Configure only at externally serialized idle-world points, never concurrently with
 	/// Update or other body/configuration operations and never from body/physics callbacks.
 	/// IDs are scoped to this system. Changes invalidate both caches without waking bodies.
