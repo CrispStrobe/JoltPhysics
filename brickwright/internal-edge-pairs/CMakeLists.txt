@@ -9,3 +9,6 @@ find_package(Threads REQUIRED)
 target_compile_definitions(Jolt PRIVATE JPH_TRACE_SIM_INTERNAL_EDGE_PAIRS)
 add_executable(internal-edge-pair-controls native-controls.cpp)
 target_link_libraries(internal-edge-pair-controls PRIVATE Jolt Threads::Threads)
+
+add_executable(internal-edge-owner-reentry-controls owner-reentry-controls.cpp)
+target_link_libraries(internal-edge-owner-reentry-controls PRIVATE Jolt Threads::Threads)

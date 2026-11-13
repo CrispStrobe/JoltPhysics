@@ -104,6 +104,7 @@ public:
 	/// Advanced use only: Set the function that will be used to collide two bodies during simulation.
 	/// This function is expected to eventually call CollideShapeCollector::AddHit all contact points between the shapes of body 1 and 2 in their given transforms.
 	void						SetSimCollideBodyVsBody(const SimCollideBodyVsBody &inBodyVsBody);
+	/// The returned reference is invalidated by a successful callback replacement or reset.
 	const SimCollideBodyVsBody &GetSimCollideBodyVsBody() const								{ return *mSimCollideBodyVsBody; }
 
 	/// Opt in exactly this unordered live rigid-body pair to enhanced internal-edge removal,
