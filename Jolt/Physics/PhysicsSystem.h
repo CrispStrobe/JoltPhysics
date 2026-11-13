@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
@@ -102,7 +104,7 @@ public:
 	/// Advanced use only: Set the function that will be used to collide two bodies during simulation.
 	/// This function is expected to eventually call CollideShapeCollector::AddHit all contact points between the shapes of body 1 and 2 in their given transforms.
 	void						SetSimCollideBodyVsBody(const SimCollideBodyVsBody &inBodyVsBody);
-	const SimCollideBodyVsBody &GetSimCollideBodyVsBody() const								{ return mSimCollideBodyVsBody; }
+	const SimCollideBodyVsBody &GetSimCollideBodyVsBody() const								{ return *mSimCollideBodyVsBody; }
 
 	/// Opt in exactly this unordered live rigid-body pair to enhanced internal-edge removal,
 	/// with inShape1 as source and inShape2 as polygon surface. Does not change body flags.
@@ -384,7 +386,9 @@ private:
 	bool						mSimInternalEdgePairsAllowed = true;
 
 	/// The collision function that is used to collide two shapes during simulation
-	SimCollideBodyVsBody		mSimCollideBodyVsBody = &sDefaultSimCollideBodyVsBody;
+	// Exchange ownership rather than std::function values: an inline functor
+	// may otherwise be copied and destroyed by swap while configuration is locked.
+	std::unique_ptr<SimCollideBodyVsBody> mSimCollideBodyVsBody = std::make_unique<SimCollideBodyVsBody>(&sDefaultSimCollideBodyVsBody);
 
 	/// Simulation settings
 	PhysicsSettings				mPhysicsSettings;

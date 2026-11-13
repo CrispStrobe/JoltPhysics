@@ -1061,9 +1061,10 @@ bool PhysicsSystem::ClearSimInternalEdgeRemovalPairs()
 
 void PhysicsSystem::SetSimCollideBodyVsBody(const SimCollideBodyVsBody &inFunction)
 {
-	// Copy user-owned functors before taking any physics lock. Swap under the
-	// configuration guard; destruction of the former functor happens after unlock.
-	SimCollideBodyVsBody replacement(inFunction);
+	// Copy user-owned functors before taking any physics lock. Only exchange
+	// pointers under the guard: std::function::swap may destroy inline functors.
+	// The former function is destroyed after the unlock scope below.
+	auto replacement = std::make_unique<SimCollideBodyVsBody>(inFunction);
 	if (!mBodyManager.TryLockSimInternalEdgePairs())
 	{
 		JPH_ASSERT(false, "Configure collide callbacks only at an idle-world configuration point");
@@ -1077,7 +1078,7 @@ void PhysicsSystem::SetSimCollideBodyVsBody(const SimCollideBodyVsBody &inFuncti
 
 bool PhysicsSystem::ResetSimCollideBodyVsBody()
 {
-	SimCollideBodyVsBody replacement(&sDefaultSimCollideBodyVsBody);
+	auto replacement = std::make_unique<SimCollideBodyVsBody>(&sDefaultSimCollideBodyVsBody);
 	if (!mBodyManager.TryLockSimInternalEdgePairs())
 		return false;
 	JPH_SCOPE_EXIT([this] { mBodyManager.UnlockSimInternalEdgePairs(); });
@@ -1113,7 +1114,7 @@ void PhysicsSystem::CollideSimBodyPair(const Body &inBody1, const Body &inBody2,
 	BodyID surface = mSimInternalEdgePairsAllowed? mBodyManager.GetSimInternalEdgeRemovalShape2(inBody1.GetID(), inBody2.GetID()) : BodyID();
 	if (surface.IsInvalid())
 	{
-		mSimCollideBodyVsBody(inBody1, inBody2, inTransform1, inTransform2, ioSettings, ioCollector, inFilter);
+		(*mSimCollideBodyVsBody)(inBody1, inBody2, inTransform1, inTransform2, ioSettings, ioCollector, inFilter);
 		return;
 	}
 
