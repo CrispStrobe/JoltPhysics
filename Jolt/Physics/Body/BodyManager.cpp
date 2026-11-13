@@ -15,6 +15,7 @@
 #include <Jolt/Physics/StateRecorder.h>
 #include <Jolt/Core/StringTools.h>
 #include <Jolt/Core/QuickSort.h>
+#include <Jolt/Core/ScopeExit.h>
 #ifdef JPH_DEBUG_RENDERER
 	#include <Jolt/Renderer/DebugRenderer.h>
 	#include <Jolt/Physics/Body/BodyFilter.h>
@@ -356,6 +357,21 @@ Body *BodyManager::RemoveBodyInternal(const BodyID &inBodyID)
 	JPH_ASSERT(body->GetID() == inBodyID);
 	JPH_ASSERT(!body->IsActive());
 	JPH_ASSERT(!body->IsInBroadPhase(), "Use BodyInterface::RemoveBody to remove this body first!");
+
+	// Remove preferences before unassignment/destruction, including custom-ID reuse
+	// and eventual sequence wrap. The existing caller owns mBodiesMutex here.
+	uint32 removed = inBodyID.GetIndexAndSequenceNumber();
+	for (auto i = mSimInternalEdgePairs.begin(); i != mSimInternalEdgePairs.end(); )
+		if (uint32(i->first >> 32) == removed || uint32(i->first) == removed)
+		{
+			BodyID other(uint32(i->first >> 32) == removed? uint32(i->first) : uint32(i->first >> 32));
+			if (Body *partner = TryGetBody(other))
+				InvalidateContactCacheForBody(*partner);
+			auto removed_pair = i++;
+			mSimInternalEdgePairs.erase(removed_pair);
+		}
+		else
+			++i;
 
 	// Push the id onto the freelist
 	mBodies[idx] = (Body *)mBodyIDFreeListStart;
@@ -1075,6 +1091,73 @@ void BodyManager::Draw(const DrawSettings &inDrawSettings, const PhysicsSettings
 	UnlockAllBodies();
 }
 #endif // JPH_DEBUG_RENDERER
+
+bool BodyManager::TryLockSimInternalEdgePairs()
+{
+	bool expected = false;
+	if (mSimInternalEdgeUpdateActive.load(memory_order_acquire)
+		|| !mSimInternalEdgeConfigurationActive.compare_exchange_strong(expected, true, memory_order_acq_rel))
+		return false;
+	if (!mBodiesMutex.try_lock())
+	{
+		mSimInternalEdgeConfigurationActive.store(false, memory_order_release);
+		return false;
+	}
+	JPH_IF_ENABLE_ASSERTS(PhysicsLock::sCheckLock(this, EPhysicsLockTypes::BodiesList);)
+	if (mSimInternalEdgeUpdateActive.load(memory_order_acquire))
+	{
+		UnlockSimInternalEdgePairs();
+		return false;
+	}
+	return true;
+}
+
+void BodyManager::UnlockSimInternalEdgePairs()
+{
+	PhysicsLock::sUnlock(mBodiesMutex JPH_IF_ENABLE_ASSERTS(, this, EPhysicsLockTypes::BodiesList));
+	mSimInternalEdgeConfigurationActive.store(false, memory_order_release);
+}
+
+bool BodyManager::SetSimInternalEdgeRemovalPairLocked(const BodyID &inShape1, const BodyID &inShape2, bool inEnable)
+{
+	if (inShape1.IsInvalid() || inShape2.IsInvalid() || inShape1 == inShape2)
+		return false;
+	Body *a = TryGetBody(inShape1), *b = TryGetBody(inShape2);
+	if (a == nullptr || b == nullptr || !a->IsRigidBody() || !b->IsRigidBody() || a->IsSensor() || b->IsSensor())
+		return false;
+	uint64 key = sSimInternalEdgePairKey(inShape1, inShape2);
+	auto existing = mSimInternalEdgePairs.find(key);
+	if (inEnable)
+	{
+		if (existing != mSimInternalEdgePairs.end() && existing->second == inShape2)
+			return true;
+		mSimInternalEdgePairs[key] = inShape2;
+	}
+	else
+	{
+		if (existing == mSimInternalEdgePairs.end())
+			return true;
+		mSimInternalEdgePairs.erase(existing);
+	}
+	InvalidateContactCacheForBody(*a);
+	InvalidateContactCacheForBody(*b);
+	return true;
+}
+
+void BodyManager::ClearSimInternalEdgeRemovalPairsLocked()
+{
+	for (const auto &pair : mSimInternalEdgePairs)
+		for (BodyID id : { BodyID(uint32(pair.first >> 32)), BodyID(uint32(pair.first)) })
+			if (Body *body = TryGetBody(id))
+				InvalidateContactCacheForBody(*body);
+	mSimInternalEdgePairs.clear();
+}
+
+BodyID BodyManager::GetSimInternalEdgeRemovalShape2(const BodyID &inBody1, const BodyID &inBody2) const
+{
+	auto pair = mSimInternalEdgePairs.find(sSimInternalEdgePairKey(inBody1, inBody2));
+	return pair == mSimInternalEdgePairs.end()? BodyID() : pair->second;
+}
 
 void BodyManager::InvalidateContactCacheForBody(Body &ioBody)
 {

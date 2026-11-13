@@ -33,6 +33,9 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Core/QuickSort.h>
 #include <Jolt/Core/ScopeExit.h>
+#ifdef JPH_TRACE_SIM_INTERNAL_EDGE_PAIRS
+	#include <cstdio>
+#endif
 #ifdef JPH_DEBUG_RENDERER
 	#include <Jolt/Renderer/DebugRenderer.h>
 #endif // JPH_DEBUG_RENDERER
@@ -72,6 +75,10 @@ static const Color cColorSoftBodyFinalize = Color::sGetDistinctColor(23);
 
 PhysicsSystem::~PhysicsSystem()
 {
+	// User collide functors are destroyed after this destructor body. Refuse
+	// their configuration reentry before any subsystem or callback is torn down.
+	mBodyManager.SetSimInternalEdgeUpdateActive(true);
+
 	// Remove broadphase
 	delete mBroadPhase;
 }
@@ -175,6 +182,8 @@ void PhysicsSystem::GatherIslandStats()
 
 EPhysicsUpdateError PhysicsSystem::Update(float inDeltaTime, int inCollisionSteps, TempAllocator *inTempAllocator, JobSystem *inJobSystem)
 {
+	mBodyManager.SetSimInternalEdgeUpdateActive(true);
+	JPH_SCOPE_EXIT([this] { mBodyManager.SetSimInternalEdgeUpdateActive(false); });
 	JPH_PROFILE_FUNCTION();
 
 	JPH_DET_LOG("PhysicsSystem::Update: dt: " << inDeltaTime << " steps: " << inCollisionSteps);
@@ -1032,6 +1041,53 @@ void PhysicsSystem::JobFindCollisions(PhysicsUpdateContext::Step *ioStep, int in
 	}
 }
 
+bool PhysicsSystem::SetSimInternalEdgeRemovalPair(const BodyID &inShape1, const BodyID &inShape2, bool inEnable)
+{
+	if (!mBodyManager.TryLockSimInternalEdgePairs())
+		return false;
+	JPH_SCOPE_EXIT([this] { mBodyManager.UnlockSimInternalEdgePairs(); });
+	return (!inEnable || mSimInternalEdgePairsAllowed)
+		&& mBodyManager.SetSimInternalEdgeRemovalPairLocked(inShape1, inShape2, inEnable);
+}
+
+bool PhysicsSystem::ClearSimInternalEdgeRemovalPairs()
+{
+	if (!mBodyManager.TryLockSimInternalEdgePairs())
+		return false;
+	JPH_SCOPE_EXIT([this] { mBodyManager.UnlockSimInternalEdgePairs(); });
+	mBodyManager.ClearSimInternalEdgeRemovalPairsLocked();
+	return true;
+}
+
+void PhysicsSystem::SetSimCollideBodyVsBody(const SimCollideBodyVsBody &inFunction)
+{
+	// Copy user-owned functors before taking any physics lock. Only exchange
+	// pointers under the guard: std::function::swap may destroy inline functors.
+	// The former function is destroyed after the unlock scope below.
+	auto replacement = std::make_unique<SimCollideBodyVsBody>(inFunction);
+	if (!mBodyManager.TryLockSimInternalEdgePairs())
+	{
+		JPH_ASSERT(false, "Configure collide callbacks only at an idle-world configuration point");
+		return;
+	}
+	JPH_SCOPE_EXIT([this] { mBodyManager.UnlockSimInternalEdgePairs(); });
+	mBodyManager.ClearSimInternalEdgeRemovalPairsLocked();
+	mSimCollideBodyVsBody.swap(replacement);
+	mSimInternalEdgePairsAllowed = false;
+}
+
+bool PhysicsSystem::ResetSimCollideBodyVsBody()
+{
+	auto replacement = std::make_unique<SimCollideBodyVsBody>(&sDefaultSimCollideBodyVsBody);
+	if (!mBodyManager.TryLockSimInternalEdgePairs())
+		return false;
+	JPH_SCOPE_EXIT([this] { mBodyManager.UnlockSimInternalEdgePairs(); });
+	mBodyManager.ClearSimInternalEdgeRemovalPairsLocked();
+	mSimCollideBodyVsBody.swap(replacement);
+	mSimInternalEdgePairsAllowed = true;
+	return true;
+}
+
 void PhysicsSystem::sDefaultSimCollideBodyVsBody(const Body &inBody1, const Body &inBody2, Mat44Arg inCenterOfMassTransform1, Mat44Arg inCenterOfMassTransform2, CollideShapeSettings &ioCollideShapeSettings, CollideShapeCollector &ioCollector, const ShapeFilter &inShapeFilter)
 {
 	SubShapeIDCreator part1, part2;
@@ -1051,6 +1107,55 @@ void PhysicsSystem::sDefaultSimCollideBodyVsBody(const Body &inBody1, const Body
 		// Regular collide
 		CollisionDispatch::sCollideShapeVsShape(inBody1.GetShape(), inBody2.GetShape(), Vec3::sOne(), Vec3::sOne(), inCenterOfMassTransform1, inCenterOfMassTransform2, part1, part2, ioCollideShapeSettings, ioCollector, inShapeFilter);
 	}
+}
+
+void PhysicsSystem::CollideSimBodyPair(const Body &inBody1, const Body &inBody2, Mat44Arg inTransform1, Mat44Arg inTransform2, CollideShapeSettings &ioSettings, CollideShapeCollector &ioCollector, const ShapeFilter &inFilter)
+{
+	BodyID surface = mSimInternalEdgePairsAllowed? mBodyManager.GetSimInternalEdgeRemovalShape2(inBody1.GetID(), inBody2.GetID()) : BodyID();
+	if (surface.IsInvalid())
+	{
+		(*mSimCollideBodyVsBody)(inBody1, inBody2, inTransform1, inTransform2, ioSettings, ioCollector, inFilter);
+		return;
+	}
+
+#ifdef JPH_TRACE_SIM_INTERNAL_EDGE_PAIRS
+	std::fprintf(stderr, "JPH_INTERNAL_EDGE_PAIR %u %u %u %u\n",
+		inBody1.GetID().GetIndexAndSequenceNumber(), inBody2.GetID().GetIndexAndSequenceNumber(),
+		(surface == inBody1.GetID()? inBody2 : inBody1).GetID().GetIndexAndSequenceNumber(), surface.GetIndexAndSequenceNumber());
+#endif
+	SubShapeIDCreator part1, part2;
+	ioSettings.mActiveEdgeMode = EActiveEdgeMode::CollideWithAll;
+	if (surface == inBody2.GetID())
+	{
+		InternalEdgeRemovingCollector::sCollideShapeVsShape(inBody1.GetShape(), inBody2.GetShape(), Vec3::sOne(), Vec3::sOne(), inTransform1, inTransform2, part1, part2, ioSettings, ioCollector, inFilter
+		#ifdef JPH_INTERNAL_EDGE_REMOVING_COLLECTOR_DEBUG
+			, inBody1.GetCenterOfMassPosition()
+		#endif
+		);
+		return;
+	}
+
+	class ReversedCollector : public CollideShapeCollector
+	{
+	public:
+		explicit ReversedCollector(CollideShapeCollector &inCollector) : CollideShapeCollector(inCollector), mCollector(inCollector) { }
+		virtual void AddHit(const CollideShapeResult &inResult) override
+		{
+			mCollector.AddHit(inResult.Reversed());
+			UpdateEarlyOutFraction(mCollector.GetEarlyOutFraction());
+		}
+	private:
+		CollideShapeCollector &mCollector;
+	};
+	ReversedCollector collector(ioCollector);
+	ReversedShapeFilter filter(inFilter);
+	CollideShapeSettings settings(ioSettings);
+	settings.mActiveEdgeMovementDirection = -settings.mActiveEdgeMovementDirection;
+	InternalEdgeRemovingCollector::sCollideShapeVsShape(inBody2.GetShape(), inBody1.GetShape(), Vec3::sOne(), Vec3::sOne(), inTransform2, inTransform1, part2, part1, settings, collector, filter
+	#ifdef JPH_INTERNAL_EDGE_REMOVING_COLLECTOR_DEBUG
+		, inBody1.GetCenterOfMassPosition() // Original offset is retained for both transforms.
+	#endif
+	);
 }
 
 void PhysicsSystem::ProcessBodyPair(ContactAllocator &ioContactAllocator, const BodyPair &inBodyPair)
@@ -1232,7 +1337,7 @@ void PhysicsSystem::ProcessBodyPair(ContactAllocator &ioContactAllocator, const 
 			ReductionCollideShapeCollector collector(this, body1, body2);
 
 			// Perform collision detection between the two shapes
-			mSimCollideBodyVsBody(*body1, *body2, transform1, transform2, settings, collector, shape_filter.GetFilter());
+			CollideSimBodyPair(*body1, *body2, transform1, transform2, settings, collector, shape_filter.GetFilter());
 
 			// Add the contacts
 			bool link_and_activate_bodies = true;
@@ -1332,7 +1437,7 @@ void PhysicsSystem::ProcessBodyPair(ContactAllocator &ioContactAllocator, const 
 			NonReductionCollideShapeCollector collector(this, ioContactAllocator, body1, body2, body_pair_handle);
 
 			// Perform collision detection between the two shapes
-			mSimCollideBodyVsBody(*body1, *body2, transform1, transform2, settings, collector, shape_filter.GetFilter());
+			CollideSimBodyPair(*body1, *body2, transform1, transform2, settings, collector, shape_filter.GetFilter());
 		}
 
 	#ifdef JPH_TRACK_SIMULATION_STATS
