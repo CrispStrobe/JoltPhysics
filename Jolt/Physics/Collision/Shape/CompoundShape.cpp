@@ -13,6 +13,7 @@
 #include <Jolt/Core/StreamIn.h>
 #include <Jolt/Core/StreamOut.h>
 #include <Jolt/ObjectStream/TypeDeclarations.h>
+#include <cfloat>
 #ifdef JPH_DEBUG_RENDERER
 	#include <Jolt/Renderer/DebugRenderer.h>
 #endif // JPH_DEBUG_RENDERER
@@ -296,6 +297,24 @@ void CompoundShape::sCastCompoundVsShape(const ShapeCast &inShapeCast, const Sha
 	// Determine amount of bits for sub shape
 	uint sub_shape_bits = compound->GetSubShapeIDBits();
 
+	// Shape casts use the target's center-of-mass space. A finite box can
+	// reject a child whose swept AABB cannot reach it. Expand the box for the
+	// narrow-phase radius, collision tolerance, and floating-point rounding.
+	const bool cull_box = inShape->GetSubType() == EShapeSubType::Box;
+	const Vec3 sweep_min = Vec3::sMin(Vec3::sZero(), inShapeCast.mDirection);
+	const Vec3 sweep_max = Vec3::sMax(Vec3::sZero(), inShapeCast.mDirection);
+	AABox box_bounds;
+	if (cull_box)
+	{
+		box_bounds = inShape->GetLocalBounds().Scaled(inScale);
+		const Vec3 magnitude = Vec3::sMax(box_bounds.mMax.Abs(), box_bounds.mMin.Abs())
+			+ Vec3::sMax(inShapeCast.mShapeWorldBounds.mMax.Abs(), inShapeCast.mShapeWorldBounds.mMin.Abs())
+			+ inShapeCast.mDirection.Abs();
+		const float margin = max(0.0f, inShapeCastSettings.mCollisionTolerance)
+			+ max(0.0f, inShapeCastSettings.mExtraConvexRadius);
+		box_bounds.ExpandBy(Vec3::sReplicate(margin) + magnitude * (16.0f * FLT_EPSILON));
+	}
+
 	// Recurse to sub shapes
 	for (int i = 0; i < n; ++i)
 	{
@@ -308,6 +327,14 @@ void CompoundShape::sCastCompoundVsShape(const ShapeCast &inShapeCast, const Sha
 		Mat44 transform = inShapeCast.mCenterOfMassStart * shape.GetLocalTransformNoScale(inShapeCast.mScale);
 		Vec3 scale = shape.TransformScale(inShapeCast.mScale);
 		ShapeCast shape_cast(shape.mShape, scale, transform, inShapeCast.mDirection);
+
+		if (cull_box)
+		{
+			const AABox &start_bounds = shape_cast.mShapeWorldBounds;
+			const AABox swept_bounds(start_bounds.mMin + sweep_min, start_bounds.mMax + sweep_max);
+			if (!swept_bounds.Overlaps(box_bounds))
+				continue;
+		}
 
 		CollisionDispatch::sCastShapeVsShapeLocalSpace(shape_cast, inShapeCastSettings, inShape, inScale, inShapeFilter, inCenterOfMassTransform2, shape1_sub_shape_id, inSubShapeIDCreator2, ioCollector);
 

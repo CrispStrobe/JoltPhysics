@@ -535,6 +535,44 @@ TEST_SUITE("CastShapeTests")
 		CHECK_APPROX_EQUAL(cast_shape_collector.mHit.mContactPointOn2, Vec3(0, 0, 1), 1.0e-4f);
 	}
 
+	TEST_CASE("TestCompoundCastBoxSweptBounds")
+	{
+		Ref<Shape> sphere = new SphereShape(0.25f);
+		StaticCompoundShapeSettings compound_settings;
+		compound_settings.AddShape(Vec3(0, 0, 0), Quat::sIdentity(), sphere);
+		compound_settings.AddShape(Vec3(0, 0, 8), Quat::sIdentity(), sphere);
+		compound_settings.AddShape(Vec3(1.76f, 0, 0), Quat::sIdentity(), sphere);
+		Ref<Shape> compound = compound_settings.Create().Get();
+		Ref<Shape> box = new BoxShape(Vec3(1, 0.5f, 0.25f), 0.0f);
+		const ShapeCast cast = ShapeCast::sFromWorldTransform(compound, Vec3::sOne(), Mat44::sTranslation(Vec3(0, 0, 2)), Vec3(0, 0, -4));
+
+		struct Filter : ShapeFilter
+		{
+			mutable int mTestedSpheres = 0;
+			bool ShouldCollide(const Shape *inFirst, const SubShapeID &, const Shape *, const SubShapeID &) const override
+			{
+				if (inFirst->GetSubType() == EShapeSubType::Sphere)
+					++mTestedSpheres;
+				return true;
+			}
+		};
+
+		for (float extra_radius : { 0.0f, 0.04f })
+		{
+			ShapeCastSettings settings;
+			settings.mExtraConvexRadius = extra_radius;
+			AllHitCollisionCollector<CastShapeCollector> hits;
+			Filter filter;
+			CollisionDispatch::sCastShapeVsShapeLocalSpace(cast, settings, box, Vec3(1.5f, 1, 1), filter, Mat44::sIdentity(), SubShapeIDCreator(), SubShapeIDCreator(), hits);
+
+			const size_t expected_count = extra_radius == 0.0f ? 1 : 2;
+			REQUIRE(hits.mHits.size() == expected_count);
+			CHECK(filter.mTestedSpheres == int(expected_count));
+			hits.Sort();
+			CHECK_APPROX_EQUAL(hits.mHits.front().mFraction, (1.5f - extra_radius) / 4.0f);
+		}
+	}
+
 	// Test CastShape with extra convex radius
 	TEST_CASE("TestCastShapeExtraConvexRadius")
 	{
