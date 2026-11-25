@@ -328,14 +328,18 @@ void CompoundShape::sCastCompoundVsShape(const ShapeCast &inShapeCast, const Sha
 		AABox query(box_bounds.mMin - sweep_max, box_bounds.mMax - sweep_min);
 		const Vec3 magnitude = Vec3::sMax(query.mMin.Abs(), query.mMax.Abs())
 			+ inShapeCast.mCenterOfMassStart.GetTranslation().Abs();
-		query.ExpandBy(Vec3::sReplicate(magnitude.Length() * (16.0f * FLT_EPSILON)));
-		const OrientedBox oriented_query(inShapeCast.mCenterOfMassStart.InversedRotationTranslation(), query);
-		const int count = compound->GetIntersectingSubShapes(oriented_query, candidates, cMaxCandidates);
-		if (count < cMaxCandidates)
+		const float extent = magnitude.ReduceMax();
+		if (extent < FLT_MAX / 32.0f)
 		{
-			QuickSort(candidates, candidates + count, [](uint a, uint b) { return a < b; });
-			n = count;
-			use_candidates = true;
+			query.ExpandBy(Vec3::sReplicate(extent * (48.0f * FLT_EPSILON)));
+			const OrientedBox oriented_query(inShapeCast.mCenterOfMassStart.InversedRotationTranslation(), query);
+			const int count = compound->GetIntersectingSubShapes(oriented_query, candidates, cMaxCandidates);
+			if (count < cMaxCandidates)
+			{
+				QuickSort(candidates, candidates + count, [](uint a, uint b) { return a < b; });
+				n = count;
+				use_candidates = true;
+			}
 		}
 	}
 
