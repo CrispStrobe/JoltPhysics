@@ -10,9 +10,12 @@
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Core/Profiler.h>
+#include <Jolt/Core/QuickSort.h>
+#include <Jolt/Geometry/OrientedBox.h>
 #include <Jolt/Core/StreamIn.h>
 #include <Jolt/Core/StreamOut.h>
 #include <Jolt/ObjectStream/TypeDeclarations.h>
+#include <cfloat>
 #ifdef JPH_DEBUG_RENDERER
 	#include <Jolt/Renderer/DebugRenderer.h>
 #endif // JPH_DEBUG_RENDERER
@@ -296,11 +299,56 @@ void CompoundShape::sCastCompoundVsShape(const ShapeCast &inShapeCast, const Sha
 	// Determine amount of bits for sub shape
 	uint sub_shape_bits = compound->GetSubShapeIDBits();
 
-	// Recurse to sub shapes
-	for (int i = 0; i < n; ++i)
+	// Shape casts use the target's center-of-mass space. A box or hull can
+	// reject a child whose swept AABB cannot reach it. Expand the bounds for the
+	// narrow-phase radius, collision tolerance, and floating-point rounding.
+	const EShapeSubType target_type = inShape->GetSubType();
+	const bool cull_target = target_type == EShapeSubType::Box || target_type == EShapeSubType::ConvexHull;
+	const Vec3 sweep_min = Vec3::sMin(Vec3::sZero(), inShapeCast.mDirection);
+	const Vec3 sweep_max = Vec3::sMax(Vec3::sZero(), inShapeCast.mDirection);
+	AABox target_bounds;
+	if (cull_target)
 	{
-		const SubShape &shape = compound->mSubShapes[i];
+		target_bounds = inShape->GetLocalBounds().Scaled(inScale);
+		const Vec3 magnitude = Vec3::sMax(target_bounds.mMax.Abs(), target_bounds.mMin.Abs())
+			+ Vec3::sMax(inShapeCast.mShapeWorldBounds.mMax.Abs(), inShapeCast.mShapeWorldBounds.mMin.Abs())
+			+ inShapeCast.mDirection.Abs();
+		const float margin = max(0.0f, inShapeCastSettings.mCollisionTolerance)
+			+ max(0.0f, inShapeCastSettings.mExtraConvexRadius);
+		target_bounds.ExpandBy(Vec3::sReplicate(margin) + magnitude * (16.0f * FLT_EPSILON));
+	}
 
+	// A large static compound already owns a bounds tree. Query it with
+	// the target bounds swept backwards, expressed in compound space. Keep
+	// original child order so equal-fraction hits retain their tie break.
+	constexpr int cMaxCandidates = 256;
+	uint candidates[cMaxCandidates];
+	bool use_candidates = false;
+	if (cull_target && n >= 32 && compound->GetSubType() == EShapeSubType::StaticCompound && inShapeCast.mScale == Vec3::sOne())
+	{
+		AABox query(target_bounds.mMin - sweep_max, target_bounds.mMax - sweep_min);
+		const Vec3 magnitude = Vec3::sMax(query.mMin.Abs(), query.mMax.Abs())
+			+ inShapeCast.mCenterOfMassStart.GetTranslation().Abs();
+		const float extent = magnitude.ReduceMax();
+		if (extent < FLT_MAX / 32.0f)
+		{
+			query.ExpandBy(Vec3::sReplicate(extent * (48.0f * FLT_EPSILON)));
+			const OrientedBox oriented_query(inShapeCast.mCenterOfMassStart.InversedRotationTranslation(), query);
+			const int count = compound->GetIntersectingSubShapes(oriented_query, candidates, cMaxCandidates);
+			if (count < cMaxCandidates)
+			{
+				QuickSort(candidates, candidates + count, [](uint a, uint b) { return a < b; });
+				n = count;
+				use_candidates = true;
+			}
+		}
+	}
+
+	// Recurse to intersecting children, or fall back to the direct walk.
+	for (int candidate = 0; candidate < n; ++candidate)
+	{
+		const uint i = use_candidates ? candidates[candidate] : uint(candidate);
+		const SubShape &shape = compound->mSubShapes[i];
 		// Create ID for sub shape
 		SubShapeIDCreator shape1_sub_shape_id = inSubShapeIDCreator1.PushID(i, sub_shape_bits);
 
@@ -308,6 +356,14 @@ void CompoundShape::sCastCompoundVsShape(const ShapeCast &inShapeCast, const Sha
 		Mat44 transform = inShapeCast.mCenterOfMassStart * shape.GetLocalTransformNoScale(inShapeCast.mScale);
 		Vec3 scale = shape.TransformScale(inShapeCast.mScale);
 		ShapeCast shape_cast(shape.mShape, scale, transform, inShapeCast.mDirection);
+
+		if (cull_target)
+		{
+			const AABox &start_bounds = shape_cast.mShapeWorldBounds;
+			const AABox swept_bounds(start_bounds.mMin + sweep_min, start_bounds.mMax + sweep_max);
+			if (!swept_bounds.Overlaps(target_bounds))
+				continue;
+		}
 
 		CollisionDispatch::sCastShapeVsShapeLocalSpace(shape_cast, inShapeCastSettings, inShape, inScale, inShapeFilter, inCenterOfMassTransform2, shape1_sub_shape_id, inSubShapeIDCreator2, ioCollector);
 
