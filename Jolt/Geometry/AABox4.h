@@ -126,6 +126,9 @@ JPH_INLINE UVec4 AABox4VsBox(Mat44Arg inOrientation, Vec3Arg inHalfExtents, Vec4
 		overlaps = UVec4::sAnd(overlaps, Vec4::sLessOrEqual(t[i].Abs(), ra + rb));
 	}
 
+	if (!overlaps.TestAnyTrue())
+		return overlaps;
+
 	// Test axes L = B0, L = B1, L = B2
 	for (int i = 0; i < 3; i++)
 	{
@@ -133,6 +136,9 @@ JPH_INLINE UVec4 AABox4VsBox(Mat44Arg inOrientation, Vec3Arg inHalfExtents, Vec4
 		rb = Vec4::sReplicate(inHalfExtents[i]);
 		overlaps = UVec4::sAnd(overlaps, Vec4::sLessOrEqual((t[0] * inOrientation(0, i) + t[1] * inOrientation(1, i) + t[2] * inOrientation(2, i)).Abs(), ra + rb));
 	}
+
+	if (!overlaps.TestAnyTrue())
+		return overlaps;
 
 	// Test axis L = A0 x B0
 	ra = a_half_extents[1] * abs_r[0][2] + a_half_extents[2] * abs_r[0][1];
