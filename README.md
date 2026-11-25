@@ -1,3 +1,29 @@
+# Jolt Physics for Brickwright
+
+Brickwright uses this fork for rigid-body simulation in Robot Lab and CAD.
+It adds gear and rack meshes that transmit loads to their frames, rope
+impulse observations, reflected rotor inertia, per-world internal-edge
+removal pairs, and faster compound casts for dense assemblies.
+[Brickwright’s JoltPhysics.js fork](https://github.com/CrispStrobe/JoltPhysics.js)
+builds the browser WebAssembly modules.
+
+- [`brickwright/main`](https://github.com/CrispStrobe/JoltPhysics/tree/brickwright/main)
+  is the integration branch, based on
+  [Jolt Physics v5.7.0](https://github.com/jrouwe/JoltPhysics/releases/tag/v5.7.0).
+- [`master`](https://github.com/CrispStrobe/JoltPhysics/tree/master) mirrors
+  [upstream `master`](https://github.com/jrouwe/JoltPhysics/tree/master).
+- [`brickwright/gear-mesh-master`](https://github.com/CrispStrobe/JoltPhysics/tree/brickwright/gear-mesh-master)
+  preserves the previous release lineage.
+- The published [JoltPhysics.js `1.1.0-bw.10` release](https://github.com/CrispStrobe/JoltPhysics.js/releases/tag/bw.10-qualified-20261112)
+  pins native [`b6c1e2a`](https://github.com/CrispStrobe/JoltPhysics/commit/b6c1e2a).
+  Each wrapper release records its native source commit in `CMakeLists.txt`.
+
+See [BRICKWRIGHT.md](BRICKWRIGHT.md) for the design and release history and
+[the CAD simulation test notes](https://github.com/CrispStrobe/brickwright-lite/blob/main/docs/CAD-ROBOT-PROJECTS.md)
+for browser qualification. This fork retains Jolt’s [MIT license](LICENSE).
+
+---
+
 [![CLA assistant](https://cla-assistant.io/readme/badge/jrouwe/JoltPhysics)](https://cla-assistant.io/jrouwe/JoltPhysics)
 [![Build Status](https://github.com/jrouwe/JoltPhysics/actions/workflows/build.yml/badge.svg)](https://github.com/jrouwe/JoltPhysics/actions/)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=jrouwe_JoltPhysics&metric=alert_status)](https://sonarcloud.io/dashboard?id=jrouwe_JoltPhysics)
