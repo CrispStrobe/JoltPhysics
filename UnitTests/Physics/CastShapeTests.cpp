@@ -578,6 +578,12 @@ TEST_SUITE("CastShapeTests")
 	{
 		Ref<Shape> sphere = new SphereShape(0.25f);
 		Ref<Shape> box = new BoxShape(Vec3(2, 2, 0.25f), 0.0f);
+		ConvexHullShapeSettings hull_settings({
+			Vec3(-2, -2, -0.25f), Vec3(-2, 2, -0.25f), Vec3(2, -2, -0.25f), Vec3(2, 2, -0.25f),
+			Vec3(-2, -2, 0.25f), Vec3(-2, 2, 0.25f), Vec3(2, -2, 0.25f), Vec3(2, 2, 0.25f)
+		});
+		hull_settings.mMaxConvexRadius = 0.0f;
+		Ref<Shape> hull = hull_settings.Create().Get();
 		const Mat44 transform = Mat44::sRotationTranslation(Quat::sRotation(Vec3::sAxisY(), 0.4f), Vec3(0, 0, 2));
 
 		// Exercise tree traversal and the full-buffer fallback separately.
@@ -592,14 +598,17 @@ TEST_SUITE("CastShapeTests")
 			Ref<Shape> shape = compound_settings.Create().Get();
 			const auto *compound = static_cast<const CompoundShape *>(shape.GetPtr());
 			const ShapeCast cast = ShapeCast::sFromWorldTransform(shape, Vec3::sOne(), transform, Vec3(0, 0, -4));
-			AllHitCollisionCollector<CastShapeCollector> hits;
-			CollisionDispatch::sCastShapeVsShapeLocalSpace(cast, ShapeCastSettings(), box, Vec3::sOne(), ShapeFilter(), Mat44::sIdentity(), SubShapeIDCreator(), SubShapeIDCreator(), hits);
-			CHECK(hits.mHits.size() == size_t(expected_hits));
-			for (size_t i = 0; i < hits.mHits.size(); ++i)
+			for (const Shape *target : { box.GetPtr(), hull.GetPtr() })
 			{
-				SubShapeID remainder;
-				CHECK(compound->GetSubShapeIndexFromID(hits.mHits[i].mSubShapeID1, remainder) == uint(i));
-				CHECK_APPROX_EQUAL(hits.mHits[i].mFraction, 0.375f);
+				AllHitCollisionCollector<CastShapeCollector> hits;
+				CollisionDispatch::sCastShapeVsShapeLocalSpace(cast, ShapeCastSettings(), target, Vec3::sOne(), ShapeFilter(), Mat44::sIdentity(), SubShapeIDCreator(), SubShapeIDCreator(), hits);
+				CHECK(hits.mHits.size() == size_t(expected_hits));
+				for (size_t i = 0; i < hits.mHits.size(); ++i)
+				{
+					SubShapeID remainder;
+					CHECK(compound->GetSubShapeIndexFromID(hits.mHits[i].mSubShapeID1, remainder) == uint(i));
+					CHECK_APPROX_EQUAL(hits.mHits[i].mFraction, 0.375f);
+				}
 			}
 		}
 	}

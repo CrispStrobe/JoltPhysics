@@ -299,33 +299,34 @@ void CompoundShape::sCastCompoundVsShape(const ShapeCast &inShapeCast, const Sha
 	// Determine amount of bits for sub shape
 	uint sub_shape_bits = compound->GetSubShapeIDBits();
 
-	// Shape casts use the target's center-of-mass space. A finite box can
-	// reject a child whose swept AABB cannot reach it. Expand the box for the
+	// Shape casts use the target's center-of-mass space. A box or hull can
+	// reject a child whose swept AABB cannot reach it. Expand the bounds for the
 	// narrow-phase radius, collision tolerance, and floating-point rounding.
-	const bool cull_box = inShape->GetSubType() == EShapeSubType::Box;
+	const EShapeSubType target_type = inShape->GetSubType();
+	const bool cull_target = target_type == EShapeSubType::Box || target_type == EShapeSubType::ConvexHull;
 	const Vec3 sweep_min = Vec3::sMin(Vec3::sZero(), inShapeCast.mDirection);
 	const Vec3 sweep_max = Vec3::sMax(Vec3::sZero(), inShapeCast.mDirection);
-	AABox box_bounds;
-	if (cull_box)
+	AABox target_bounds;
+	if (cull_target)
 	{
-		box_bounds = inShape->GetLocalBounds().Scaled(inScale);
-		const Vec3 magnitude = Vec3::sMax(box_bounds.mMax.Abs(), box_bounds.mMin.Abs())
+		target_bounds = inShape->GetLocalBounds().Scaled(inScale);
+		const Vec3 magnitude = Vec3::sMax(target_bounds.mMax.Abs(), target_bounds.mMin.Abs())
 			+ Vec3::sMax(inShapeCast.mShapeWorldBounds.mMax.Abs(), inShapeCast.mShapeWorldBounds.mMin.Abs())
 			+ inShapeCast.mDirection.Abs();
 		const float margin = max(0.0f, inShapeCastSettings.mCollisionTolerance)
 			+ max(0.0f, inShapeCastSettings.mExtraConvexRadius);
-		box_bounds.ExpandBy(Vec3::sReplicate(margin) + magnitude * (16.0f * FLT_EPSILON));
+		target_bounds.ExpandBy(Vec3::sReplicate(margin) + magnitude * (16.0f * FLT_EPSILON));
 	}
 
 	// A large static compound already owns a bounds tree. Query it with
-	// the target box swept backwards, expressed in compound space. Keep
+	// the target bounds swept backwards, expressed in compound space. Keep
 	// original child order so equal-fraction hits retain their tie break.
 	constexpr int cMaxCandidates = 256;
 	uint candidates[cMaxCandidates];
 	bool use_candidates = false;
-	if (cull_box && n >= 32 && compound->GetSubType() == EShapeSubType::StaticCompound && inShapeCast.mScale == Vec3::sOne())
+	if (cull_target && n >= 32 && compound->GetSubType() == EShapeSubType::StaticCompound && inShapeCast.mScale == Vec3::sOne())
 	{
-		AABox query(box_bounds.mMin - sweep_max, box_bounds.mMax - sweep_min);
+		AABox query(target_bounds.mMin - sweep_max, target_bounds.mMax - sweep_min);
 		const Vec3 magnitude = Vec3::sMax(query.mMin.Abs(), query.mMax.Abs())
 			+ inShapeCast.mCenterOfMassStart.GetTranslation().Abs();
 		const float extent = magnitude.ReduceMax();
@@ -356,11 +357,11 @@ void CompoundShape::sCastCompoundVsShape(const ShapeCast &inShapeCast, const Sha
 		Vec3 scale = shape.TransformScale(inShapeCast.mScale);
 		ShapeCast shape_cast(shape.mShape, scale, transform, inShapeCast.mDirection);
 
-		if (cull_box)
+		if (cull_target)
 		{
 			const AABox &start_bounds = shape_cast.mShapeWorldBounds;
 			const AABox swept_bounds(start_bounds.mMin + sweep_min, start_bounds.mMax + sweep_max);
-			if (!swept_bounds.Overlaps(box_bounds))
+			if (!swept_bounds.Overlaps(target_bounds))
 				continue;
 		}
 
