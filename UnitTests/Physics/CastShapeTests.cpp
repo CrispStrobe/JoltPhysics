@@ -566,10 +566,11 @@ TEST_SUITE("CastShapeTests")
 			CollisionDispatch::sCastShapeVsShapeLocalSpace(cast, settings, box, Vec3(1.5f, 1, 1), filter, Mat44::sIdentity(), SubShapeIDCreator(), SubShapeIDCreator(), hits);
 
 			const size_t expected_count = extra_radius == 0.0f ? 1 : 2;
-			REQUIRE(hits.mHits.size() == expected_count);
+			CHECK(hits.mHits.size() == expected_count);
 			CHECK(filter.mTestedSpheres == int(expected_count));
 			hits.Sort();
-			CHECK_APPROX_EQUAL(hits.mHits.front().mFraction, (1.5f - extra_radius) / 4.0f);
+			if (!hits.mHits.empty())
+				CHECK_APPROX_EQUAL(hits.mHits.front().mFraction, (1.5f - extra_radius) / 4.0f);
 		}
 	}
 
@@ -593,8 +594,8 @@ TEST_SUITE("CastShapeTests")
 			const ShapeCast cast = ShapeCast::sFromWorldTransform(shape, Vec3::sOne(), transform, Vec3(0, 0, -4));
 			AllHitCollisionCollector<CastShapeCollector> hits;
 			CollisionDispatch::sCastShapeVsShapeLocalSpace(cast, ShapeCastSettings(), box, Vec3::sOne(), ShapeFilter(), Mat44::sIdentity(), SubShapeIDCreator(), SubShapeIDCreator(), hits);
-			REQUIRE(hits.mHits.size() == size_t(expected_hits));
-			for (int i = 0; i < expected_hits; ++i)
+			CHECK(hits.mHits.size() == size_t(expected_hits));
+			for (size_t i = 0; i < hits.mHits.size(); ++i)
 			{
 				SubShapeID remainder;
 				CHECK(compound->GetSubShapeIndexFromID(hits.mHits[i].mSubShapeID1, remainder) == uint(i));
