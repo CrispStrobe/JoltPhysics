@@ -573,6 +573,36 @@ TEST_SUITE("CastShapeTests")
 		}
 	}
 
+	TEST_CASE("TestLargeCompoundCastKeepsChildOrder")
+	{
+		Ref<Shape> sphere = new SphereShape(0.25f);
+		Ref<Shape> box = new BoxShape(Vec3(2, 2, 0.25f), 0.0f);
+		const Mat44 transform = Mat44::sRotationTranslation(Quat::sRotation(Vec3::sAxisY(), 0.4f), Vec3(0, 0, 2));
+
+		// Exercise tree traversal and the full-buffer fallback separately.
+		for (int expected_hits : { 2, 256, 270 })
+		{
+			StaticCompoundShapeSettings compound_settings;
+			for (int i = 0; i < expected_hits; ++i)
+				compound_settings.AddShape(Vec3::sZero(), Quat::sIdentity(), sphere);
+			for (int i = 0; i < 64; ++i)
+				compound_settings.AddShape(Vec3(float(i % 4), 0, 8.0f + float(i) * 0.1f), Quat::sIdentity(), sphere);
+
+			Ref<Shape> shape = compound_settings.Create().Get();
+			const auto *compound = static_cast<const CompoundShape *>(shape.GetPtr());
+			const ShapeCast cast = ShapeCast::sFromWorldTransform(shape, Vec3::sOne(), transform, Vec3(0, 0, -4));
+			AllHitCollisionCollector<CastShapeCollector> hits;
+			CollisionDispatch::sCastShapeVsShapeLocalSpace(cast, ShapeCastSettings(), box, Vec3::sOne(), ShapeFilter(), Mat44::sIdentity(), SubShapeIDCreator(), SubShapeIDCreator(), hits);
+			REQUIRE(hits.mHits.size() == size_t(expected_hits));
+			for (int i = 0; i < expected_hits; ++i)
+			{
+				SubShapeID remainder;
+				CHECK(compound->GetSubShapeIndexFromID(hits.mHits[i].mSubShapeID1, remainder) == uint(i));
+				CHECK_APPROX_EQUAL(hits.mHits[i].mFraction, 0.375f);
+			}
+		}
+	}
+
 	// Test CastShape with extra convex radius
 	TEST_CASE("TestCastShapeExtraConvexRadius")
 	{

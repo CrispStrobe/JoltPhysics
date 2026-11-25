@@ -10,6 +10,8 @@
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Core/Profiler.h>
+#include <Jolt/Core/QuickSort.h>
+#include <Jolt/Geometry/OrientedBox.h>
 #include <Jolt/Core/StreamIn.h>
 #include <Jolt/Core/StreamOut.h>
 #include <Jolt/ObjectStream/TypeDeclarations.h>
@@ -315,11 +317,33 @@ void CompoundShape::sCastCompoundVsShape(const ShapeCast &inShapeCast, const Sha
 		box_bounds.ExpandBy(Vec3::sReplicate(margin) + magnitude * (16.0f * FLT_EPSILON));
 	}
 
-	// Recurse to sub shapes
-	for (int i = 0; i < n; ++i)
+	// A large static compound already owns a bounds tree. Query it with
+	// the target box swept backwards, expressed in compound space. Keep
+	// original child order so equal-fraction hits retain their tie break.
+	constexpr int cMaxCandidates = 256;
+	uint candidates[cMaxCandidates];
+	bool use_candidates = false;
+	if (cull_box && n >= 32 && compound->GetSubType() == EShapeSubType::StaticCompound && inShapeCast.mScale == Vec3::sOne())
 	{
-		const SubShape &shape = compound->mSubShapes[i];
+		AABox query(box_bounds.mMin - sweep_max, box_bounds.mMax - sweep_min);
+		const Vec3 magnitude = Vec3::sMax(query.mMin.Abs(), query.mMax.Abs())
+			+ inShapeCast.mCenterOfMassStart.GetTranslation().Abs();
+		query.ExpandBy(Vec3::sReplicate(magnitude.Length() * (16.0f * FLT_EPSILON)));
+		const OrientedBox oriented_query(inShapeCast.mCenterOfMassStart.InversedRotationTranslation(), query);
+		const int count = compound->GetIntersectingSubShapes(oriented_query, candidates, cMaxCandidates);
+		if (count < cMaxCandidates)
+		{
+			QuickSort(candidates, candidates + count, [](uint a, uint b) { return a < b; });
+			n = count;
+			use_candidates = true;
+		}
+	}
 
+	// Recurse to intersecting children, or fall back to the direct walk.
+	for (int candidate = 0; candidate < n; ++candidate)
+	{
+		const uint i = use_candidates ? candidates[candidate] : uint(candidate);
+		const SubShape &shape = compound->mSubShapes[i];
 		// Create ID for sub shape
 		SubShapeIDCreator shape1_sub_shape_id = inSubShapeIDCreator1.PushID(i, sub_shape_bits);
 
