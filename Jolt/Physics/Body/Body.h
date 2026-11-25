@@ -52,10 +52,8 @@ public:
 	/// Check if this body is a soft body
 	inline bool				IsSoftBody() const												{ return mBodyType == EBodyType::SoftBody; }
 
-	// See comment at GetIndexInActiveBodiesInternal for reasoning why TSAN is disabled here
-	JPH_TSAN_NO_SANITIZE
 	/// If this body is currently actively simulating (true) or sleeping (false)
-	inline bool				IsActive() const												{ return mMotionProperties != nullptr && mMotionProperties->mIndexInActiveBodies != cInactiveIndex; }
+	inline bool				IsActive() const												{ return mMotionProperties != nullptr && mMotionProperties->GetIndexInActiveBodiesInternal() != cInactiveIndex; }
 
 	/// Check if this body is static (not movable)
 	inline bool				IsStatic() const												{ return mMotionType == EMotionType::Static; }
@@ -398,13 +396,8 @@ public:
 	/// @param inUpdateMassProperties When true, the mass and inertia tensor is recalculated
 	void					SetShapeInternal(const Shape *inShape, bool inUpdateMassProperties);
 
-	// TSAN detects a race between BodyManager::AddBodyToActiveBodies coming from PhysicsSystem::ProcessBodyPair and Body::GetIndexInActiveBodiesInternal coming from PhysicsSystem::ProcessBodyPair.
-	// When PhysicsSystem::ProcessBodyPair activates a body, it updates mIndexInActiveBodies and then updates BodyManager::mNumActiveBodies with release semantics. PhysicsSystem::ProcessBodyPair will
-	// then finish its loop of active bodies and at the end of the loop it will read BodyManager::mNumActiveBodies with acquire semantics to see if any bodies were activated during the loop.
-	// This means that changes to mIndexInActiveBodies must be visible to the thread, so TSANs report must be a false positive. We suppress the warning here.
-	JPH_TSAN_NO_SANITIZE
 	/// Access to the index in the BodyManager::mActiveBodies list
-	uint32					GetIndexInActiveBodiesInternal() const							{ return mMotionProperties != nullptr? mMotionProperties->mIndexInActiveBodies : cInactiveIndex; }
+	uint32					GetIndexInActiveBodiesInternal() const							{ return mMotionProperties != nullptr? mMotionProperties->GetIndexInActiveBodiesInternal() : cInactiveIndex; }
 
 	/// Update eligibility for sleeping
 	ECanSleep				UpdateSleepStateInternal(float inDeltaTime, float inMaxMovement, float inTimeBeforeSleep);
@@ -471,7 +464,7 @@ private:
 	// 122 bytes up to here (64-bit mode, single precision, 16-bit ObjectLayer)
 };
 
-static_assert(sizeof(void *) != 8 || JPH_RVECTOR_ALIGNMENT < 16 || sizeof(Body) == JPH_IF_SINGLE_PRECISION_ELSE(128, 160), "Body size is incorrect");
+static_assert(sizeof(void *) != 8 || JPH_RVECTOR_ALIGNMENT < 16 || JPH_OBJECT_LAYER_BITS > 32 || sizeof(Body) == JPH_IF_SINGLE_PRECISION_ELSE(128, 160), "Body size is incorrect");
 static_assert(alignof(Body) == max(JPH_VECTOR_ALIGNMENT, JPH_RVECTOR_ALIGNMENT), "Body should properly align");
 
 JPH_NAMESPACE_END

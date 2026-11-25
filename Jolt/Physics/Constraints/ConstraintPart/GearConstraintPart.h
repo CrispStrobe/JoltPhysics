@@ -52,7 +52,7 @@ class GearConstraintPart
 			// Euler velocity integration:
 			// v' = v + M^-1 P
 			ioBody1.GetMotionProperties()->AddAngularVelocityStep(inLambda * mInvI1_A);
-			ioBody2.GetMotionProperties()->AddAngularVelocityStep(inLambda * mRatio_InvI2_B); // Brickwright fork: J^T lambda for body 2 is r b lambda (upstream applied b lambda, passing torque 1:1)
+			ioBody2.GetMotionProperties()->AddAngularVelocityStep(inLambda * mRatio_InvI2_B);
 			return true;
 		}
 
@@ -74,11 +74,11 @@ public:
 		// Calculate: I1^-1 a
 		mInvI1_A = inBody1.GetMotionProperties()->MultiplyWorldSpaceInverseInertiaByVector(inBody1.GetRotation(), inWorldSpaceHingeAxis1);
 
-		// Calculate: r I2^-1 b (Brickwright fork: the ratio belongs in body 2's part of J^T, see BRICKWRIGHT.md)
+		// Calculate: r * I2^-1 b
 		mRatio_InvI2_B = inRatio * inBody2.GetMotionProperties()->MultiplyWorldSpaceInverseInertiaByVector(inBody2.GetRotation(), inWorldSpaceHingeAxis2);
 
 		// K^-1 = 1 / (J M^-1 J^T) = 1 / (a^T I1^-1 a + r^2 * b^T I2^-1 b)
-		float inv_effective_mass = inWorldSpaceHingeAxis1.Dot(mInvI1_A) + inRatio * inWorldSpaceHingeAxis2.Dot(mRatio_InvI2_B);
+		float inv_effective_mass = inWorldSpaceHingeAxis1.Dot(mInvI1_A) + inWorldSpaceHingeAxis2.Dot(mRatio_InvI2_B) * inRatio;
 		if (inv_effective_mass < FLT_MIN)
 			Deactivate();
 		else
